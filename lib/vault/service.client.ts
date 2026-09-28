@@ -153,7 +153,9 @@ export class VaultService {
 
     await this.persist({
       ...data,
-      credentials: data.credentials.filter((credential) => credential.id !== id),
+      credentials: data.credentials.filter(
+        (credential) => credential.id !== id
+      ),
     })
   }
 

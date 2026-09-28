@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -17,6 +17,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/vault", label: "Vault" },
   { href: "/generate", label: "Generator" },
+  { href: "/health", label: "Health" },
 ]
 
 export function VaultShell({ children }: { children: React.ReactNode }) {

@@ -9,10 +9,7 @@ import {
 export const MASTER_PASSPHRASE_MIN_LENGTH = 12
 
 export type CredentialField =
-  | "accountName"
-  | "siteOrApp"
-  | "username"
-  | "password"
+  "accountName" | "siteOrApp" | "username" | "password"
 
 export class CredentialValidationError extends Error {
   readonly fields: Partial<Record<CredentialField, string>>
@@ -75,7 +72,9 @@ function isCredential(value: unknown): value is Credential {
     (value.notes === undefined || typeof value.notes === "string") &&
     (value.riskLevel === undefined ||
       (typeof value.riskLevel === "string" &&
-        RISK_LEVELS.includes(value.riskLevel as (typeof RISK_LEVELS)[number]))) &&
+        RISK_LEVELS.includes(
+          value.riskLevel as (typeof RISK_LEVELS)[number]
+        ))) &&
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string" &&
     typeof value.passwordUpdatedAt === "string"

@@ -16,13 +16,8 @@ import { useVault } from "@/components/vault/vault-provider"
 import { MASTER_PASSPHRASE_MIN_LENGTH } from "@/lib/vault/validation"
 
 export function VaultGate() {
-  const {
-    status,
-    busy,
-    initializationError,
-    createVault,
-    unlockVault,
-  } = useVault()
+  const { status, busy, initializationError, createVault, unlockVault } =
+    useVault()
   const [passphrase, setPassphrase] = useState("")
   const [confirmation, setConfirmation] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -46,7 +41,9 @@ export function VaultGate() {
             <div className="mb-2 flex size-11 items-center justify-center rounded-full bg-destructive/10 text-destructive">
               <AlertTriangle className="size-5" aria-hidden="true" />
             </div>
-            <h1 className="font-heading text-xl font-medium">Vault unavailable</h1>
+            <h1 className="font-heading text-xl font-medium">
+              Vault unavailable
+            </h1>
             <CardDescription className="text-sm">
               {initializationError}
             </CardDescription>
@@ -74,7 +71,9 @@ export function VaultGate() {
       setConfirmation("")
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "The vault could not be opened."
+        caught instanceof Error
+          ? caught.message
+          : "The vault could not be opened."
       )
     }
   }
@@ -117,9 +116,12 @@ export function VaultGate() {
                 aria-describedby={creating ? "vault-password-help" : undefined}
               />
               {creating ? (
-                <p id="vault-password-help" className="text-xs text-muted-foreground">
-                  Use at least {MASTER_PASSPHRASE_MIN_LENGTH} characters and choose
-                  something memorable and hard to guess.
+                <p
+                  id="vault-password-help"
+                  className="text-xs text-muted-foreground"
+                >
+                  Use at least {MASTER_PASSPHRASE_MIN_LENGTH} characters and
+                  choose something memorable and hard to guess.
                 </p>
               ) : null}
             </div>
@@ -164,7 +166,6 @@ export function VaultGate() {
                   : "Unlock vault"}
             </Button>
           </form>
-
         </CardContent>
       </Card>
     </main>
