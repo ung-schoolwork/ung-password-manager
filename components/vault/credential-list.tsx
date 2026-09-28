@@ -9,6 +9,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { RISK_TAG_STYLES } from "@/components/vault/health-workspace"
+import { cn } from "@/lib/utils"
 import type { Credential } from "@/lib/vault/types"
 
 export function CredentialList({
@@ -25,7 +27,9 @@ export function CredentialList({
         <CardDescription className="text-sm">
           {credentials.length === 0
             ? "Your vault is empty."
-            : `${credentials.length} saved ${credentials.length === 1 ? "credential" : "credentials"}.`}
+            : credentials.length === 1
+              ? "1 saved credential."
+              : String(credentials.length) + " saved credentials."}
         </CardDescription>
         <CardAction>
           <Button
@@ -74,10 +78,13 @@ export function CredentialList({
 }
 
 function CredentialRow({ credential }: { credential: Credential }) {
+  const risk = credential.riskLevel ?? "low"
+
   return (
     <article
       className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5"
       data-credential-id={credential.id}
+      data-risk-level={risk}
     >
       <div
         className="flex size-8 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground ring-1 ring-border"
@@ -87,7 +94,7 @@ function CredentialRow({ credential }: { credential: Credential }) {
       </div>
 
       <dl className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-baseline gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <dt className="sr-only">Account label</dt>
           <dd className="truncate text-sm font-semibold">
             {credential.accountName}
@@ -95,6 +102,18 @@ function CredentialRow({ credential }: { credential: Credential }) {
           <dt className="sr-only">Website or app</dt>
           <dd className="truncate text-xs text-muted-foreground">
             {credential.siteOrApp}
+          </dd>
+          <dt className="sr-only">Risk level</dt>
+          <dd>
+            <span
+              className={cn(
+                "tag rounded-full px-2.5 py-0.5 text-xs font-bold uppercase",
+                "tag-" + risk,
+                RISK_TAG_STYLES[risk]
+              )}
+            >
+              {risk}
+            </span>
           </dd>
         </div>
 

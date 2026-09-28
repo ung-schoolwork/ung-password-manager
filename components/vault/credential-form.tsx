@@ -14,7 +14,7 @@ import {
 import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
 import { useVault } from "@/components/vault/vault-provider"
 import { cn } from "@/lib/utils"
-import type { CredentialDraft } from "@/lib/vault/types"
+import type { CredentialDraft, RiskLevel } from "@/lib/vault/types"
 import {
   CredentialValidationError,
   type CredentialField,
@@ -26,6 +26,7 @@ const EMPTY_DRAFT: CredentialDraft = {
   username: "",
   password: "",
   notes: "",
+  riskLevel: "low",
 }
 
 export interface CredentialFormProps {
@@ -110,6 +111,22 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
         autoComplete="username"
         onChange={(value) => updateDraft("username", value)}
       />
+
+      <div className="space-y-2">
+        <Label htmlFor="credential-risk-level">Risk level</Label>
+        <select
+          id="credential-risk-level"
+          className="h-10 w-full rounded-md border border-input bg-input/20 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 dark:bg-input/30"
+          value={draft.riskLevel ?? "low"}
+          onChange={(event) =>
+            updateDraft("riskLevel", event.target.value as RiskLevel)
+          }
+        >
+          <option value="low">Low Risk</option>
+          <option value="medium">Medium Risk</option>
+          <option value="high">High Risk</option>
+        </select>
+      </div>
 
       <div className="space-y-2">
         <Label htmlFor="credential-password">Password</Label>
@@ -236,7 +253,7 @@ function Field({
   autoComplete,
   onChange,
 }: FieldProps) {
-  const errorId = `${id}-error`
+  const errorId = id + "-error"
 
   return (
     <div className="space-y-2">
