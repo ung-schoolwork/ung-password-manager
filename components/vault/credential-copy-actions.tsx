@@ -35,7 +35,8 @@ export function CredentialCopyActions({
 
   return (
     <div className="flex shrink-0 flex-col items-end gap-1">
-      <div className="flex items-center gap-2">
+      {/* Stacked on narrow screens so the credential text keeps its space. */}
+      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
         <CopyButton
           field="username"
           justCopied={copiedField === "username"}
@@ -48,8 +49,10 @@ export function CredentialCopyActions({
         />
       </div>
 
+      {/* Text is visible from the sm breakpoint up; below it, it is only
+          announced to screen readers and the button icon shows the state. */}
       <p
-        className="min-h-4 text-right text-xs text-muted-foreground"
+        className="sr-only text-right text-xs text-muted-foreground sm:not-sr-only sm:min-h-4 sm:max-w-56"
         role="status"
         aria-live="polite"
       >
