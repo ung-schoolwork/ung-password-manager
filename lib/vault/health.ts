@@ -9,8 +9,8 @@ export interface CredentialHealthReport extends Credential {
   warnings: PasswordWarning[]
 }
 
-const MIN_LENGTH = 12
-const RECOMMENDED_LENGTH = 16
+const MIN_LENGTH = 8
+const RECOMMENDED_LENGTH = 15
 const DAYS_OVERDUE = 90
 
 const COMMON_PASSWORDS = [
@@ -19,38 +19,72 @@ const COMMON_PASSWORDS = [
   "111111", "football", "dragon", "sunshine", "princess"
 ]
 
-export function analyzeCredentialsHealth(
-  credentials: Credential[]
-): CredentialHealthReport[] {
-  const passwordMap = new Map<string, string[]>()
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password.toLowerCase())
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data)
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
 
-  for (const cred of credentials) {
-    const list = passwordMap.get(cred.password) || []
+export async function analyzeCredentialsHealth(
+  credentials: Credential[]
+): Promise<CredentialHealthReport[]> {
+  const credentialsWithHashes = await Promise.all(
+    credentials.map(async (cred) => ({
+      ...cred,
+      passwordHash: await hashPassword(cred.password),
+    }))
+  )
+
+  const hashGroups = new Map<string, string[]>()
+  for (const cred of credentialsWithHashes) {
+    const list = hashGroups.get(cred.passwordHash) || []
     list.push(cred.accountName || cred.siteOrApp)
-    passwordMap.set(cred.password, list)
+    hashGroups.set(cred.passwordHash, list)
   }
 
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - DAYS_OVERDUE)
 
-  return credentials
+  return credentialsWithHashes
     .map((cred) => {
       const warnings: PasswordWarning[] = []
       const pwd = cred.password
+      const lowerPwd = pwd.toLowerCase()
 
-      if (pwd.length < MIN_LENGTH || COMMON_PASSWORDS.includes(pwd.toLowerCase())) {
+      if (pwd.length < MIN_LENGTH) {
         warnings.push({
           type: "Weak",
-          explanation: `Password is below ${MIN_LENGTH} characters or matches a common predictable pattern.`
+          explanation: `Below the ${MIN_LENGTH}-character absolute minimum required by NIST SP 800-63B.`
         })
       } else if (pwd.length < RECOMMENDED_LENGTH) {
         warnings.push({
           type: "Short",
-          explanation: `Password is under the recommended ${RECOMMENDED_LENGTH}+ characters.`
+          explanation: `Under the ${RECOMMENDED_LENGTH}+ characters NIST SP 800-63B-4 recommends for standalone passwords.`
         })
       }
 
-      const sharedWith = passwordMap.get(pwd) || []
+      if (COMMON_PASSWORDS.includes(lowerPwd)) {
+        warnings.push({
+          type: "Weak",
+          explanation: "Matches a commonly used or previously breached dictionary password."
+        })
+      }
+
+      const isSimplePattern =
+        pwd.length < RECOMMENDED_LENGTH &&
+        (/^[a-z]+[0-9]+$/i.test(pwd) || /^[0-9]+[a-z]+$/i.test(pwd))
+
+      if (isSimplePattern) {
+        warnings.push({
+          type: "Weak",
+          explanation: "Follows an easily guessed predictable word-and-number combination."
+        })
+      }
+
+      const sharedWith = hashGroups.get(cred.passwordHash) || []
       const otherAccounts = sharedWith.filter(
         (name) => name !== (cred.accountName || cred.siteOrApp)
       )
