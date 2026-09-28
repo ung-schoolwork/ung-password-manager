@@ -89,6 +89,38 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
     fullPage: true,
   })
 
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  const savedCredential = page
+    .getByRole("list", { name: "Saved credentials" })
+    .getByRole("listitem")
+
+  await savedCredential.getByRole("button", { name: "Copy username" }).click()
+  await expect(savedCredential.getByRole("status")).toHaveText(
+    "Username copied."
+  )
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "student@example.edu"
+  )
+
+  await savedCredential.getByRole("button", { name: "Copy password" }).click()
+  await expect(savedCredential.getByRole("status")).toHaveText(
+    "Password copied."
+  )
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    generatedPassword
+  )
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("Clipboard denied")) },
+    })
+  })
+  await savedCredential.getByRole("button", { name: "Copy username" }).click()
+  await expect(savedCredential.getByRole("status")).toHaveText(
+    "Could not copy. Check your browser's clipboard permission."
+  )
+
   await page.reload()
   await expect(
     page.getByRole("heading", { name: "Unlock your vault" })

@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
 import type { Credential } from "@/lib/vault/types"
 
 export function CredentialList({
@@ -118,6 +119,11 @@ function CredentialRow({ credential }: { credential: Credential }) {
           ) : null}
         </div>
       </dl>
+
+      <CredentialCopyActions
+        username={credential.username}
+        password={credential.password}
+      />
     </article>
   )
 }
