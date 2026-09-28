@@ -16,7 +16,7 @@ test("shows saved password warnings and their reasons", async ({
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
-  await page.getByLabel("Username").fill("student@example.edu")
+  await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
 
@@ -35,7 +35,7 @@ test("shows saved password warnings and their reasons", async ({
   await page.getByRole("button", { name: "Add credential" }).click()
   await page.getByLabel("Account label").fill("Backup email")
   await page.getByLabel("Website or app").fill("backup.example.edu")
-  await page.getByLabel("Username").fill("backup@example.edu")
+  await page.getByRole("textbox", { name: "Username" }).fill("backup@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
 
