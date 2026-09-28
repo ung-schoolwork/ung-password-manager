@@ -29,7 +29,11 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("font-sans antialiased", fontMono.variable, inter.variable)}
+      className={cn(
+        "font-sans antialiased",
+        fontMono.variable,
+        inter.variable
+      )}
     >
       <body>
         <ThemeProvider>

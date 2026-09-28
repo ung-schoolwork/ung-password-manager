@@ -5,7 +5,10 @@ import {
   decryptVault,
   encryptVault,
 } from "../../../lib/vault/crypto.client"
-import { VAULT_DATA_VERSION, type VaultDataV1 } from "../../../lib/vault/types"
+import {
+  VAULT_DATA_VERSION,
+  type VaultDataV1,
+} from "../../../lib/vault/types"
 
 const passphrase = "correct horse battery staple"
 const vaultData: VaultDataV1 = {

@@ -14,41 +14,37 @@ const RECOMMENDED_LENGTH = 15
 const DAYS_OVERDUE = 90
 
 const COMMON_PASSWORDS = [
-  "password", "123456", "12345678", "qwerty", "letmein",
-  "abc123", "iloveyou", "admin", "welcome", "monkey",
-  "111111", "football", "dragon", "sunshine", "princess"
+  "password",
+  "123456",
+  "12345678",
+  "qwerty",
+  "letmein",
+  "abc123",
+  "iloveyou",
+  "admin",
+  "welcome",
+  "monkey",
+  "111111",
+  "football",
+  "dragon",
+  "sunshine",
+  "princess",
 ]
 
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(password.toLowerCase())
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data)
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-}
-
-export async function analyzeCredentialsHealth(
+export function analyzeCredentialsHealth(
   credentials: Credential[]
-): Promise<CredentialHealthReport[]> {
-  const credentialsWithHashes = await Promise.all(
-    credentials.map(async (cred) => ({
-      ...cred,
-      passwordHash: await hashPassword(cred.password),
-    }))
-  )
-
-  const hashGroups = new Map<string, string[]>()
-  for (const cred of credentialsWithHashes) {
-    const list = hashGroups.get(cred.passwordHash) || []
-    list.push(cred.accountName || cred.siteOrApp)
-    hashGroups.set(cred.passwordHash, list)
+): CredentialHealthReport[] {
+  const passwordGroups = new Map<string, Credential[]>()
+  for (const credential of credentials) {
+    const group = passwordGroups.get(credential.password) ?? []
+    group.push(credential)
+    passwordGroups.set(credential.password, group)
   }
 
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - DAYS_OVERDUE)
 
-  return credentialsWithHashes
+  return credentials
     .map((cred) => {
       const warnings: PasswordWarning[] = []
       const pwd = cred.password
@@ -57,19 +53,19 @@ export async function analyzeCredentialsHealth(
       if (pwd.length < MIN_LENGTH) {
         warnings.push({
           type: "Weak",
-          explanation: `Below the ${MIN_LENGTH}-character absolute minimum required by NIST SP 800-63B.`
+          explanation: `This password has fewer than ${MIN_LENGTH} characters and may be easy to guess.`,
         })
       } else if (pwd.length < RECOMMENDED_LENGTH) {
         warnings.push({
           type: "Short",
-          explanation: `Under the ${RECOMMENDED_LENGTH}+ characters NIST SP 800-63B-4 recommends for standalone passwords.`
+          explanation: `This password has fewer than ${RECOMMENDED_LENGTH} characters. Longer passwords are harder to guess.`,
         })
       }
 
       if (COMMON_PASSWORDS.includes(lowerPwd)) {
         warnings.push({
           type: "Weak",
-          explanation: "Matches a commonly used or previously breached dictionary password."
+          explanation: "This matches a commonly used password.",
         })
       }
 
@@ -80,27 +76,31 @@ export async function analyzeCredentialsHealth(
       if (isSimplePattern) {
         warnings.push({
           type: "Weak",
-          explanation: "Follows an easily guessed predictable word-and-number combination."
+          explanation:
+            "Follows an easily guessed predictable word-and-number combination.",
         })
       }
 
-      const sharedWith = hashGroups.get(cred.passwordHash) || []
-      const otherAccounts = sharedWith.filter(
-        (name) => name !== (cred.accountName || cred.siteOrApp)
+      const otherAccounts = (passwordGroups.get(pwd) ?? []).filter(
+        (other) => other.id !== cred.id
       )
 
       if (otherAccounts.length > 0) {
         warnings.push({
           type: "Reused",
-          explanation: `Same password also used for: ${otherAccounts.join(", ")}. If one account is breached, all are exposed.`
+          explanation: `This password is also saved for: ${otherAccounts
+            .map((other) => `${other.accountName} (${other.siteOrApp})`)
+            .join(", ")}. Reusing a password puts multiple accounts at risk.`,
         })
       }
 
-      const lastUpdated = new Date(cred.passwordUpdatedAt || cred.updatedAt || cred.createdAt)
+      const lastUpdated = new Date(
+        cred.passwordUpdatedAt || cred.updatedAt || cred.createdAt
+      )
       if (lastUpdated < ninetyDaysAgo) {
         warnings.push({
           type: "Overdue",
-          explanation: "Password hasn't been updated in over 90 days and is due for rotation."
+          explanation: `This password has not changed in over ${DAYS_OVERDUE} days. Review whether it needs updating.`,
         })
       }
 

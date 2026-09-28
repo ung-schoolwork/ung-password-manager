@@ -1,4 +1,7 @@
-import { VAULT_ENVELOPE_VERSION, type VaultEnvelopeV1 } from "@/lib/vault/types"
+import {
+  VAULT_ENVELOPE_VERSION,
+  type VaultEnvelopeV1,
+} from "@/lib/vault/types"
 
 export const VAULT_STORAGE_KEY = "ung-password-manager:vault:v1"
 

@@ -42,9 +42,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<VaultStatus>("loading")
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [busy, setBusy] = useState(false)
-  const [initializationError, setInitializationError] = useState<string | null>(
-    null
-  )
+  const [initializationError, setInitializationError] = useState<
+    string | null
+  >(null)
 
   useEffect(() => {
     let active = true
