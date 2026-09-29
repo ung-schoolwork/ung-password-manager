@@ -1,7 +1,7 @@
-﻿"use client"
+﻿﻿"use client"
 
-import { useMemo } from "react"
-import { AlertTriangle, ShieldCheck, KeyRound } from "lucide-react"
+import { useMemo, useState, type FormEvent } from "react"
+import { AlertTriangle, ShieldCheck, KeyRound, Plus } from "lucide-react"
 
 import { useVault } from "@/components/vault/vault-provider"
 import { analyzeCredentialsHealth } from "@/lib/vault/health"
@@ -12,9 +12,17 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import type { RiskLevel } from "@/lib/vault/types"
 
 export function PasswordHealth() {
-  const { credentials } = useVault()
+  const { credentials, addCredential, updateCredential } = useVault()
+  const [accountName, setAccountName] = useState("")
+  const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
+  const [formError, setFormError] = useState<string | null>(null)
+
   const auditedAccounts = useMemo(
     () => analyzeCredentialsHealth(credentials),
     [credentials]
@@ -26,6 +34,50 @@ export function PasswordHealth() {
     (acc, curr) => acc + curr.warnings.length,
     0
   )
+
+  async function handleQuickAdd(e: FormEvent) {
+    e.preventDefault()
+    setFormError(null)
+    if (!accountName.trim()) {
+      setFormError("Enter an account name.")
+      return
+    }
+
+    const existing = credentials.find(
+      (c) => c.accountName.toLowerCase() === accountName.trim().toLowerCase()
+    )
+
+    if (existing) {
+      const confirmed = window.confirm(
+        `An account named "${existing.accountName}" already exists. Do you want to overwrite its risk rating?`
+      )
+      if (!confirmed) return
+
+      try {
+        await updateCredential(existing.id, { riskLevel })
+        setAccountName("")
+        setRiskLevel("medium")
+        return
+      } catch {
+        setFormError("Could not update existing credential.")
+        return
+      }
+    }
+
+    try {
+      await addCredential({
+        accountName: accountName.trim(),
+        siteOrApp: "example.com",
+        username: "user@example.com",
+        password: "password123",
+        riskLevel,
+      })
+      setAccountName("")
+      setRiskLevel("medium")
+    } catch {
+      setFormError("Could not save credential.")
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -80,6 +132,7 @@ export function PasswordHealth() {
             <ul className="space-y-3" aria-label="Password health reports">
               {auditedAccounts.map((acc) => {
                 const hasWarnings = acc.warnings.length > 0
+                const risk = acc.riskLevel || "low"
                 return (
                   <li
                     key={acc.id}
@@ -96,17 +149,31 @@ export function PasswordHealth() {
                           {acc.siteOrApp}
                         </p>
                       </div>
-                      <span
-                        className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                          hasWarnings
-                            ? "bg-destructive/10 text-destructive"
-                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                        }`}
-                      >
-                        {hasWarnings
-                          ? `${acc.warnings.length} ${acc.warnings.length === 1 ? "issue" : "issues"}`
-                          : "No warnings"}
-                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
+                            risk === "high"
+                              ? "bg-destructive/10 text-destructive"
+                              : risk === "medium"
+                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          }`}
+                        >
+                          {risk}
+                        </span>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                            hasWarnings
+                              ? "bg-destructive/10 text-destructive"
+                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          }`}
+                        >
+                          {hasWarnings
+                            ? `${acc.warnings.length} ${acc.warnings.length === 1 ? "issue" : "issues"}`
+                            : "No warnings"}
+                        </span>
+                      </div>
                     </div>
 
                     {hasWarnings && (
@@ -132,6 +199,48 @@ export function PasswordHealth() {
                 )
               })}
             </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Add Account Credential</CardTitle>
+          <CardDescription className="text-xs">
+            Tag an account by risk level to prioritize its security warnings.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleQuickAdd} className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="quick-account-name">Account name</Label>
+              <Input
+                id="quick-account-name"
+                placeholder="e.g., Student Database"
+                value={accountName}
+                onChange={(e) => setAccountName(e.target.value)}
+              />
+            </div>
+            <div className="w-full sm:w-48 space-y-1.5">
+              <Label htmlFor="quick-risk-level">Risk level</Label>
+              <select
+                id="quick-risk-level"
+                className="h-7 w-full rounded-md border border-input bg-input/20 px-2 text-xs outline-none dark:bg-input/30"
+                value={riskLevel}
+                onChange={(e) => setRiskLevel(e.target.value as RiskLevel)}
+              >
+                <option value="low">Low Risk</option>
+                <option value="medium">Medium Risk</option>
+                <option value="high">High Risk</option>
+              </select>
+            </div>
+            <Button type="submit" className="h-7 px-4">
+              <Plus className="size-3.5" aria-hidden="true" />
+              Save
+            </Button>
+          </form>
+          {formError && (
+            <p className="mt-2 text-xs text-destructive">{formError}</p>
           )}
         </CardContent>
       </Card>
