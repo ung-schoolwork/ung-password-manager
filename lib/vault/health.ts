@@ -1,4 +1,4 @@
-﻿import type { Credential } from "@/lib/vault/types"
+﻿﻿import type { Credential } from "@/lib/vault/types"
 
 export interface PasswordWarning {
   type: "Weak" | "Short" | "Reused" | "Overdue"
@@ -12,6 +12,12 @@ export interface CredentialHealthReport extends Credential {
 const MIN_LENGTH = 8
 const RECOMMENDED_LENGTH = 15
 const DAYS_OVERDUE = 90
+
+const RISK_PRIORITY: Record<string, number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+}
 
 const COMMON_PASSWORDS = [
   "password",
@@ -106,8 +112,15 @@ export function analyzeCredentialsHealth(
 
       return {
         ...cred,
+        riskLevel: cred.riskLevel || "low",
         warnings,
       }
     })
-    .sort((a, b) => b.warnings.length - a.warnings.length)
+    .sort((a, b) => {
+      const riskDiff =
+        (RISK_PRIORITY[b.riskLevel || "low"] || 1) -
+        (RISK_PRIORITY[a.riskLevel || "low"] || 1)
+      if (riskDiff !== 0) return riskDiff
+      return b.warnings.length - a.warnings.length
+    })
 }
