@@ -1,8 +1,13 @@
 import { mkdir } from "node:fs/promises"
 
 import { expect, test } from "@playwright/test"
+import { registerAccount } from "./account-helpers"
 
 const vaultPassword = "correct horse battery staple"
+
+test.beforeEach(async ({ page }) => {
+  await registerAccount(page)
+})
 
 test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async ({
   page,
@@ -74,8 +79,10 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
     page.getByText("Recovery codes are in the shared drive.")
   ).toBeVisible({ visible: !isMobile })
 
-  const persistedVault = await page.evaluate(() =>
-    localStorage.getItem("ung-password-manager:vault:v1")
+  const identity = await (await page.request.get("/api/auth/session")).json()
+  const persistedVault = await page.evaluate(
+    (id) => localStorage.getItem(`ung-password-manager:vault:v1:account:${id}`),
+    identity.user.id
   )
   expect(persistedVault).toBeTruthy()
   expect(persistedVault).not.toContain("University email")

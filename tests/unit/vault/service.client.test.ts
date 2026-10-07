@@ -2,10 +2,7 @@ import { describe, expect, it } from "bun:test"
 
 import type { VaultRepository } from "../../../lib/vault/repository.client"
 import { VaultService } from "../../../lib/vault/service.client"
-import type {
-  CredentialDraft,
-  VaultEnvelopeV1,
-} from "../../../lib/vault/types"
+import type { CredentialDraft, VaultEnvelopeV1 } from "../../../lib/vault/types"
 import { CredentialValidationError } from "../../../lib/vault/validation"
 
 class MemoryVaultRepository implements VaultRepository {
@@ -87,7 +84,9 @@ describe("VaultService", () => {
         ...validDraft,
       }),
     ])
-    expect(JSON.stringify(repository.envelope)).not.toContain(validDraft.password)
+    expect(JSON.stringify(repository.envelope)).not.toContain(
+      validDraft.password
+    )
   })
 
   it("does not mutate committed state when persistence fails", async () => {
@@ -120,8 +119,85 @@ describe("VaultService", () => {
     const changedPassword = await service.updateCredential(saved.id, {
       password: "AnotherDemoOnly!654321",
     })
-    expect(changedPassword.passwordUpdatedAt).toBe(
-      "2026-09-24T00:00:00.000Z"
-    )
+    expect(changedPassword.passwordUpdatedAt).toBe("2026-09-24T00:00:00.000Z")
+  })
+  it("does not restore decrypted state when locked during vault creation", async () => {
+    const repository = new MemoryVaultRepository()
+    let release!: () => void
+    let started!: () => void
+    const saving = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const originalSave = repository.save.bind(repository)
+    repository.save = async (envelope) => {
+      started()
+      await gate
+      await originalSave(envelope)
+    }
+    const service = createService(repository)
+    const creating = service.createVault(passphrase)
+    await saving
+    service.lockVault()
+    release()
+    await expect(creating).rejects.toThrow("Unlock the vault")
+    expect(service.isUnlocked()).toBe(false)
+    expect(() => service.listCredentials()).toThrow("Unlock the vault")
+  })
+
+  it("does not restore decrypted state when locked during an unlock", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+    service.lockVault()
+    let release!: () => void
+    let started!: () => void
+    const loading = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const originalLoad = repository.load.bind(repository)
+    repository.load = async () => {
+      started()
+      await gate
+      return originalLoad()
+    }
+    const unlocking = service.unlockVault(passphrase)
+    await loading
+    service.lockVault()
+    release()
+    await expect(unlocking).rejects.toThrow("Unlock the vault")
+    expect(service.isUnlocked()).toBe(false)
+  })
+
+  it("does not restore decrypted state when locked during a save", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+    let release!: () => void
+    let started!: () => void
+    const saving = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const originalSave = repository.save.bind(repository)
+    repository.save = async (envelope) => {
+      started()
+      await gate
+      await originalSave(envelope)
+    }
+    const pending = service.saveCredential(validDraft)
+    await saving
+    service.lockVault()
+    release()
+    await expect(pending).rejects.toThrow("Unlock the vault")
+    expect(service.isUnlocked()).toBe(false)
+    expect(() => service.listCredentials()).toThrow("Unlock the vault")
   })
 })

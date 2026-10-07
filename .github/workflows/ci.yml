@@ -16,6 +16,19 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27018/ung_auth_test
+      APP_ORIGIN: http://127.0.0.1:3100
+    services:
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27018:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 })'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Check out repository
@@ -35,6 +48,9 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Account authentication integration tests
+        run: bun run test:integration
 
       - name: Type-check
         run: bun run typecheck
