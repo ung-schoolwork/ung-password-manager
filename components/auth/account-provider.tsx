@@ -14,6 +14,7 @@ import {
   AccountRequestError,
   markSignOutPending,
   signOutIsPending,
+  signOutGeneration,
   PENDING_SIGN_OUT,
   withAccountMutation,
   type AccountSession,
@@ -162,21 +163,32 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const authenticate = useCallback(
     async (mode: "login" | "register", email: string, password: string) => {
       const current = ++generation.current
+      const signOutAtStart = signOutGeneration()
       signedOutLocally.current = true
       await withAccountMutation(async () => {
-        if (current !== generation.current)
+        if (
+          current !== generation.current ||
+          signOutAtStart !== signOutGeneration()
+        )
           throw new Error("Sign-in was interrupted. Try again.")
         if (signOutIsPending()) {
           await accountRequest("logout", {})
           markSignOutPending(false)
         }
-        if (current !== generation.current)
+        if (
+          current !== generation.current ||
+          signOutAtStart !== signOutGeneration()
+        )
           throw new Error("Sign-in was interrupted. Try again.")
         const next = await accountRequest<AccountSession>(mode, {
           email,
           password,
         })
-        if (current !== generation.current || signOutIsPending()) {
+        if (
+          current !== generation.current ||
+          signOutIsPending() ||
+          signOutAtStart !== signOutGeneration()
+        ) {
           // A stale response may already have installed a cookie. Revoke it,
           // rather than merely discarding its React state.
           markSignOutPending(true)

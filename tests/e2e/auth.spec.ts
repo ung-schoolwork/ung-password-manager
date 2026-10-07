@@ -272,57 +272,79 @@ test("a late valid session response cannot reopen the vault after sign-out", asy
   ).toHaveCount(0)
 })
 
-test("a delayed login cannot set a usable cookie after another tab signs out", async ({
-  page,
-  context,
-}) => {
-  const account = await registerAccount(page)
-  await page.request.post("/api/auth/logout", {
-    headers: { Origin: "http://127.0.0.1:3100" },
-    data: {},
+for (const delayedNotifications of [false, true]) {
+  test(`a delayed login cannot undo cross-tab sign-out${delayedNotifications ? " without Web Locks or timely notifications" : ""}`, async ({
+    page,
+    context,
+  }) => {
+    const account = await registerAccount(page)
+    await page.request.post("/api/auth/logout", {
+      headers: { Origin: "http://127.0.0.1:3100" },
+      data: {},
+    })
+    const pendingTab = await context.newPage()
+    if (delayedNotifications) {
+      await pendingTab.addInitScript(() => {
+        Object.defineProperty(navigator, "locks", { value: undefined })
+        Object.defineProperty(window, "BroadcastChannel", { value: undefined })
+        // Model a tab whose queued cross-tab notifications have not been delivered.
+        window.addEventListener("storage", (event) =>
+          event.stopImmediatePropagation()
+        )
+      })
+    }
+    await pendingTab.goto("/sign-in")
+    await expect(
+      pendingTab.getByRole("heading", { name: "Sign in", exact: true })
+    ).toBeVisible()
+    let release!: () => void
+    let started!: () => void
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await pendingTab.route("**/api/auth/login", async (route) => {
+      const response = await route.fetch()
+      expect(response.status()).toBe(200)
+      started()
+      await gate
+      await route.fulfill({ response })
+    })
+    await signIn(pendingTab, account.email)
+    await ready
+    await registerAccount(page)
+    await page.goto("/vault")
+    await expect(
+      page.getByRole("heading", { name: "Create your vault" })
+    ).toBeVisible()
+    await page.getByRole("button", { name: "Sign out", exact: true }).click()
+    await expect(
+      page.getByRole("heading", { name: "Sign in", exact: true })
+    ).toBeVisible()
+    if (delayedNotifications) {
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            localStorage.getItem("ung-password-manager:pending-sign-out")
+          )
+        )
+        .toBeNull()
+      expect((await page.request.get("/api/auth/session")).status()).toBe(401)
+    }
+    const response = pendingTab.waitForResponse("**/api/auth/login")
+    release()
+    await response
+    await expect
+      .poll(async () => (await page.request.get("/api/auth/session")).status())
+      .toBe(401)
+    await pendingTab.reload()
+    await expect(
+      pendingTab.getByRole("heading", { name: "Sign in", exact: true })
+    ).toBeVisible()
   })
-  const pendingTab = await context.newPage()
-  await pendingTab.goto("/sign-in")
-  await expect(
-    pendingTab.getByRole("heading", { name: "Sign in", exact: true })
-  ).toBeVisible()
-  let release!: () => void
-  let started!: () => void
-  const ready = new Promise<void>((resolve) => {
-    started = resolve
-  })
-  const gate = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  await pendingTab.route("**/api/auth/login", async (route) => {
-    const response = await route.fetch()
-    expect(response.status()).toBe(200)
-    started()
-    await gate
-    await route.fulfill({ response })
-  })
-  await signIn(pendingTab, account.email)
-  await ready
-  await registerAccount(page)
-  await page.goto("/vault")
-  await expect(
-    page.getByRole("heading", { name: "Create your vault" })
-  ).toBeVisible()
-  await page.getByRole("button", { name: "Sign out", exact: true }).click()
-  await expect(
-    page.getByRole("heading", { name: "Sign in", exact: true })
-  ).toBeVisible()
-  const response = pendingTab.waitForResponse("**/api/auth/login")
-  release()
-  await response
-  await expect
-    .poll(async () => (await page.request.get("/api/auth/session")).status())
-    .toBe(401)
-  await pendingTab.reload()
-  await expect(
-    pendingTab.getByRole("heading", { name: "Sign in", exact: true })
-  ).toBeVisible()
-})
+}
 
 test("an account change queues a fresh check behind an older pending check", async ({
   page,

@@ -38,6 +38,8 @@ export class AccountRequestError extends Error {
 
 const MUTATION_LOCK = "ung-password-manager:account-mutation"
 export const PENDING_SIGN_OUT = "ung-password-manager:pending-sign-out"
+const SIGN_OUT_GENERATION = "ung-password-manager:sign-out-generation"
+let localSignOutGeneration = ""
 let localMutation: Promise<unknown> = Promise.resolve()
 
 // Cookies are installed by the browser before fetch resolves. Serialize account
@@ -53,6 +55,17 @@ export async function withAccountMutation<T>(
   return result
 }
 
+// Keep this generation after logout completes: the pending flag alone cannot
+// invalidate an in-flight login when cross-tab notifications arrive late.
+export function signOutGeneration(): string {
+  try {
+    return (
+      window.localStorage.getItem(SIGN_OUT_GENERATION) || localSignOutGeneration
+    )
+  } catch {
+    return localSignOutGeneration
+  }
+}
 export function signOutIsPending(): boolean {
   try {
     return window.localStorage.getItem(PENDING_SIGN_OUT) === "true"
@@ -62,9 +75,12 @@ export function signOutIsPending(): boolean {
 }
 
 export function markSignOutPending(pending: boolean): void {
+  if (pending) localSignOutGeneration = crypto.randomUUID()
   try {
-    if (pending) window.localStorage.setItem(PENDING_SIGN_OUT, "true")
-    else window.localStorage.removeItem(PENDING_SIGN_OUT)
+    if (pending) {
+      window.localStorage.setItem(SIGN_OUT_GENERATION, localSignOutGeneration)
+      window.localStorage.setItem(PENDING_SIGN_OUT, "true")
+    } else window.localStorage.removeItem(PENDING_SIGN_OUT)
   } catch {
     /* The in-memory guard still applies when storage is unavailable. */
   }
