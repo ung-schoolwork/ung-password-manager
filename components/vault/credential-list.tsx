@@ -1,7 +1,8 @@
 "use client"
 
 import { useMemo } from "react"
-import { Plus } from "lucide-react"
+import { KeyRound, Plus } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -30,19 +31,44 @@ export function CredentialList({
       <CardHeader>
         <CardTitle className="text-lg">Saved credentials</CardTitle>
         <CardDescription className="text-sm">
-          {credentials.length === 0 ? "Vault is empty." : `${credentials.length} saved accounts.`}
+          {credentials.length === 0
+            ? "Your vault is empty."
+            : `${credentials.length} saved ${credentials.length === 1 ? "credential" : "credentials"}.`}
         </CardDescription>
         <CardAction>
-          <Button onClick={onAddCredential}><Plus className="size-4" />Add credential</Button>
+          <Button
+            className="h-9 px-3 text-sm"
+            type="button"
+            onClick={onAddCredential}
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            Add credential
+          </Button>
         </CardAction>
       </CardHeader>
       <CardContent>
         {credentials.length === 0 ? (
-          <div className="min-h-32 grid place-items-center border-dashed border rounded-lg bg-muted/20">
-            <p className="text-muted-foreground text-sm">No credentials yet.</p>
+          <div className="grid min-h-64 place-items-center rounded-lg border border-dashed bg-muted/20 p-8 text-center">
+            <div>
+              <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <KeyRound className="size-5" aria-hidden="true" />
+              </div>
+              <p className="mt-4 font-medium">No credentials yet</p>
+              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                Add your first credential to get started.
+              </p>
+              <Button
+                className="mt-4 h-9 px-3 text-sm"
+                type="button"
+                onClick={onAddCredential}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+                Add credential
+              </Button>
+            </div>
           </div>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-2" aria-label="Saved credentials">
             {audited.map((credential) => (
               <li key={credential.id}>
                 <CredentialRow credential={credential} />
@@ -57,19 +83,56 @@ export function CredentialList({
 
 function CredentialRow({ credential }: { credential: CredentialHealthReport }) {
   const hasWarnings = credential.warnings.length > 0
-  const status = !hasWarnings ? "success" : (credential.riskLevel === "high" ? "danger" : "warning")
+  const status = !hasWarnings
+    ? "success"
+    : credential.riskLevel === "high"
+      ? "danger"
+      : "warning"
 
   return (
-    <article className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
+    <article
+      className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5"
+      data-credential-id={credential.id}
+    >
       <HealthShield status={status} size="sm" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2">
-          <span className="truncate text-sm font-semibold">{credential.accountName}</span>
-          <span className="truncate text-xs text-muted-foreground">{credential.siteOrApp}</span>
+
+      <dl className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <dt className="sr-only">Account label</dt>
+          <dd className="truncate text-sm font-semibold">
+            {credential.accountName}
+          </dd>
+          <dt className="sr-only">Website or app</dt>
+          <dd className="truncate text-xs text-muted-foreground">
+            {credential.siteOrApp}
+          </dd>
         </div>
-        <div className="text-xs text-muted-foreground truncate">{credential.username}</div>
-      </div>
-      <CredentialCopyActions username={credential.username} password={credential.password} />
+
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <dt className="sr-only">Username</dt>
+          <dd className="truncate">{credential.username}</dd>
+          <span aria-hidden="true">{"\u00B7"}</span>
+          <dt className="sr-only">Password</dt>
+          <dd
+            className="shrink-0 font-mono tracking-wider"
+            aria-label="Password hidden"
+          >
+            {"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}
+          </dd>
+          {credential.notes ? (
+            <div className="hidden min-w-0 items-center gap-2 sm:flex">
+              <span aria-hidden="true">{"\u00B7"}</span>
+              <dt className="sr-only">Notes</dt>
+              <dd className="truncate">{credential.notes}</dd>
+            </div>
+          ) : null}
+        </div>
+      </dl>
+
+      <CredentialCopyActions
+        username={credential.username}
+        password={credential.password}
+      />
     </article>
   )
 }
