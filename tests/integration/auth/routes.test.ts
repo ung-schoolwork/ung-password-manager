@@ -142,9 +142,7 @@ describe("real MongoDB auth routes", () => {
       })
     )
     assert.equal(signedOut.status, 200)
-    assert.ok(
-      signedOut.headers.get("set-cookie")?.includes("Expires=Thu, 01 Jan 1970")
-    )
+    assert.equal(signedOut.headers.get("set-cookie"), null)
     assert.equal((await session(get(first))).status, 401)
     assert.equal(await authenticatedUser(get(first)), null)
     assert.equal((await session(get(cookie(second)))).status, 200)

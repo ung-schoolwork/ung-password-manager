@@ -110,9 +110,6 @@ export function setSessionCookie(
     expires,
   })
 }
-export function clearSessionCookie(response: NextResponse) {
-  setSessionCookie(response, "", new Date(0))
-}
 export async function credentials(request: Request) {
   if (
     !/^application\/json(?:\s*;|\s*$)/i.test(

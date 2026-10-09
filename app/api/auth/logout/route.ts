@@ -1,5 +1,4 @@
 import {
-  clearSessionCookie,
   connectAuth,
   digest,
   failure,
@@ -16,9 +15,9 @@ export async function POST(request: Request) {
     await connectAuth()
     const token = readToken(request)
     if (token) await Session.deleteOne({ tokenDigest: digest(token) })
-    const response = json({ ok: true })
-    clearSessionCookie(response)
-    return response
+    // Revocation invalidates the request's token. A cookie-clearing response
+    // could arrive after another tab signs in and erase its newer session.
+    return json({ ok: true })
   } catch {
     return failure()
   }
