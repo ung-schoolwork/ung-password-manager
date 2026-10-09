@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { KeyRound, Plus } from "lucide-react"
+import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
 import { HealthShield } from "@/components/vault/health-shield"
-import { analyzeCredentialsHealth } from "@/lib/vault/health"
+import { analyzeCredentialsHealth, type CredentialHealthReport } from "@/lib/vault/health"
 import type { Credential } from "@/lib/vault/types"
 
 export function CredentialList({
@@ -23,7 +23,6 @@ export function CredentialList({
   credentials: Credential[]
   onAddCredential(): void
 }) {
-  // Use the audit logic to determine the health color for each row
   const audited = useMemo(() => analyzeCredentialsHealth(credentials), [credentials])
 
   return (
@@ -34,7 +33,7 @@ export function CredentialList({
           {credentials.length === 0 ? "Vault is empty." : `${credentials.length} saved accounts.`}
         </CardDescription>
         <CardAction>
-          <Button onClick={onAddCredential}><Plus className="size-4" />Add</Button>
+          <Button onClick={onAddCredential}><Plus className="size-4" />Add credential</Button>
         </CardAction>
       </CardHeader>
       <CardContent>
@@ -56,7 +55,7 @@ export function CredentialList({
   )
 }
 
-function CredentialRow({ credential }: { credential: any }) {
+function CredentialRow({ credential }: { credential: CredentialHealthReport }) {
   const hasWarnings = credential.warnings.length > 0
   const status = !hasWarnings ? "success" : (credential.riskLevel === "high" ? "danger" : "warning")
 

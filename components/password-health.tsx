@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { AlertTriangle, ShieldCheck, KeyRound, Plus } from "lucide-react"
+import { AlertTriangle, KeyRound, Plus } from "lucide-react"
 import { useVault } from "@/components/vault/vault-provider"
 import { analyzeCredentialsHealth } from "@/lib/vault/health"
 import { cn } from "@/lib/utils"
@@ -114,9 +114,7 @@ export function PasswordHealth() {
                     <div className="flex-1">
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="text-sm font-bold uppercase">{acc.accountName}</h3>
-                        <div className="flex gap-2">
-                           <span className="rounded-full px-2 py-0.5 text-[10px] font-bold border uppercase bg-background">{risk} risk</span>
-                        </div>
+                        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold border uppercase bg-background">{risk} risk</span>
                       </div>
                       {hasWarnings && (
                         <div className="space-y-2">
@@ -134,6 +132,41 @@ export function PasswordHealth() {
               })}
             </ul>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Add Account Credential</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleQuickAdd} className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="flex-1 space-y-1.5">
+              <Label htmlFor="quick-account-name">Account name</Label>
+              <Input
+                id="quick-account-name"
+                value={accountName}
+                onChange={(e) => setAccountName(e.target.value)}
+              />
+            </div>
+            <div className="w-full sm:w-48 space-y-1.5">
+              <Label htmlFor="quick-risk-level">Risk level</Label>
+              <select
+                id="quick-risk-level"
+                className="h-7 w-full rounded-md border border-input bg-input/20 px-2 text-xs"
+                value={riskLevel}
+                onChange={(e) => setRiskLevel(e.target.value as RiskLevel)}
+              >
+                <option value="low">Low Risk</option>
+                <option value="medium">Medium Risk</option>
+                <option value="high">High Risk</option>
+              </select>
+            </div>
+            <Button type="submit" className="h-7 px-4">
+              <Plus className="size-3.5" /> Save
+            </Button>
+          </form>
+          {formError && <p className="mt-2 text-xs text-destructive">{formError}</p>}
         </CardContent>
       </Card>
     </div>
