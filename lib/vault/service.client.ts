@@ -45,6 +45,7 @@ const defaultDependencies: VaultServiceDependencies = {
 export class VaultService {
   private data: VaultDataV1 | null = null
   private passphrase: string | null = null
+  private generation = 0
 
   constructor(
     private readonly repository: VaultRepository,
@@ -60,6 +61,7 @@ export class VaultService {
   }
 
   async createVault(passphrase: string): Promise<void> {
+    const generation = ++this.generation
     validateMasterPassphrase(passphrase)
 
     if (await this.hasVault()) throw new VaultAlreadyExistsError()
@@ -69,22 +71,27 @@ export class VaultService {
       credentials: [],
     }
     const envelope = await encryptVault(passphrase, data)
+    this.assertCurrent(generation)
     await this.repository.save(envelope)
+    this.assertCurrent(generation)
 
     this.data = data
     this.passphrase = passphrase
   }
 
   async unlockVault(passphrase: string): Promise<void> {
+    const generation = ++this.generation
     const envelope = await this.repository.load()
     if (!envelope) throw new VaultNotFoundError()
 
     const data = await decryptVault(passphrase, envelope)
+    this.assertCurrent(generation)
     this.data = data
     this.passphrase = passphrase
   }
 
   lockVault(): void {
+    this.generation += 1
     this.data = null
     this.passphrase = null
   }
@@ -153,19 +160,27 @@ export class VaultService {
 
     await this.persist({
       ...data,
-      credentials: data.credentials.filter((credential) => credential.id !== id),
+      credentials: data.credentials.filter(
+        (credential) => credential.id !== id
+      ),
     })
   }
 
+  private assertCurrent(generation: number): void {
+    if (generation !== this.generation) throw new VaultLockedError()
+  }
   private requireUnlocked(): { data: VaultDataV1; passphrase: string } {
     if (!this.data || !this.passphrase) throw new VaultLockedError()
     return { data: this.data, passphrase: this.passphrase }
   }
 
   private async persist(data: VaultDataV1): Promise<void> {
+    const generation = this.generation
     const { passphrase } = this.requireUnlocked()
     const envelope = await encryptVault(passphrase, data)
+    this.assertCurrent(generation)
     await this.repository.save(envelope)
+    this.assertCurrent(generation)
     this.data = data
   }
 }

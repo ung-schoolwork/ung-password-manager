@@ -12,6 +12,7 @@ import {
 
 import {
   LocalStorageVaultRepository,
+  VAULT_STORAGE_KEY,
   type VaultRepository,
 } from "@/lib/vault/repository.client"
 import { VaultService } from "@/lib/vault/service.client"
@@ -37,19 +38,26 @@ interface VaultContextValue {
 
 const VaultContext = createContext<VaultContextValue | null>(null)
 
-export function VaultProvider({ children }: { children: ReactNode }) {
+export function VaultProvider({
+  children,
+  accountId,
+}: {
+  children: ReactNode
+  accountId: string
+}) {
   const serviceRef = useRef<VaultService | null>(null)
   const [status, setStatus] = useState<VaultStatus>("loading")
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [busy, setBusy] = useState(false)
-  const [initializationError, setInitializationError] = useState<
-    string | null
-  >(null)
+  const [initializationError, setInitializationError] = useState<string | null>(
+    null
+  )
 
   useEffect(() => {
     let active = true
     const repository: VaultRepository = new LocalStorageVaultRepository(
-      window.localStorage
+      window.localStorage,
+      `${VAULT_STORAGE_KEY}:account:${accountId}`
     )
     const service = new VaultService(repository)
     serviceRef.current = service
@@ -72,7 +80,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       service.lockVault()
       serviceRef.current = null
     }
-  }, [])
+  }, [accountId])
 
   const requireService = useCallback(() => {
     if (!serviceRef.current) throw new Error("The vault is still loading.")
@@ -80,6 +88,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refreshCredentials = useCallback((service: VaultService) => {
+    if (serviceRef.current !== service) return
     setCredentials(service.listCredentials())
   }, [])
 
@@ -89,6 +98,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setBusy(true)
       try {
         await service.createVault(passphrase)
+        if (serviceRef.current !== service) return
         refreshCredentials(service)
         setStatus("unlocked")
       } finally {
@@ -104,6 +114,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setBusy(true)
       try {
         await service.unlockVault(passphrase)
+        if (serviceRef.current !== service) return
         refreshCredentials(service)
         setStatus("unlocked")
       } finally {

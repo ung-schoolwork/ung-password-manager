@@ -3,15 +3,18 @@
 import type { ReactNode } from "react"
 
 import { VaultGate } from "@/components/vault/vault-gate"
-import {
-  VaultProvider,
-  useVault,
-} from "@/components/vault/vault-provider"
+import { VaultProvider, useVault } from "@/components/vault/vault-provider"
 import { VaultShell } from "@/components/vault/vault-shell"
 
-export function VaultApp({ children }: { children: ReactNode }) {
+export function VaultApp({
+  children,
+  accountId,
+}: {
+  children: ReactNode
+  accountId: string
+}) {
   return (
-    <VaultProvider>
+    <VaultProvider accountId={accountId}>
       <VaultScreen>{children}</VaultScreen>
     </VaultProvider>
   )
