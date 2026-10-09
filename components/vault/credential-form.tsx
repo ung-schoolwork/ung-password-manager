@@ -14,7 +14,7 @@ import {
 import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
 import { useVault } from "@/components/vault/vault-provider"
 import { cn } from "@/lib/utils"
-import type { CredentialDraft } from "@/lib/vault/types"
+import type { Credential, CredentialDraft, RiskLevel } from "@/lib/vault/types"
 import {
   CredentialValidationError,
   type CredentialField,
@@ -26,21 +26,43 @@ const EMPTY_DRAFT: CredentialDraft = {
   username: "",
   password: "",
   notes: "",
+  riskLevel: "low",
 }
 
 export interface CredentialFormProps {
+  initialCredential?: Credential
   onSaved?(): void
+  onCancel?(): void
 }
 
-export function CredentialForm({ onSaved }: CredentialFormProps) {
-  const { addCredential, busy } = useVault()
-  const [draft, setDraft] = useState<CredentialDraft>(EMPTY_DRAFT)
+export function CredentialForm({
+  initialCredential,
+  onSaved,
+  onCancel,
+}: CredentialFormProps) {
+  const { addCredential, updateCredential, busy } = useVault()
+  const isEditing = Boolean(initialCredential)
+
+  const [draft, setDraft] = useState<CredentialDraft>(() => {
+    if (initialCredential) {
+      return {
+        accountName: initialCredential.accountName,
+        siteOrApp: initialCredential.siteOrApp,
+        username: initialCredential.username,
+        password: initialCredential.password,
+        notes: initialCredential.notes ?? "",
+        riskLevel: initialCredential.riskLevel ?? "low",
+      }
+    }
+    return EMPTY_DRAFT
+  })
+
   const [errors, setErrors] = useState<
     Partial<Record<CredentialField, string>>
   >({})
   const [message, setMessage] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
-  const [generatorOpen, setGeneratorOpen] = useState(true)
+  const [generatorOpen, setGeneratorOpen] = useState(!isEditing)
 
   function updateDraft<Key extends keyof CredentialDraft>(
     key: Key,
@@ -65,9 +87,13 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
     setMessage(null)
 
     try {
-      await addCredential(draft)
-      setDraft(EMPTY_DRAFT)
-      setShowPassword(false)
+      if (initialCredential) {
+        await updateCredential(initialCredential.id, draft)
+      } else {
+        await addCredential(draft)
+        setDraft(EMPTY_DRAFT)
+        setShowPassword(false)
+      }
       onSaved?.()
     } catch (caught) {
       if (caught instanceof CredentialValidationError) {
@@ -191,6 +217,22 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
       </Collapsible>
 
       <div className="space-y-2">
+        <Label htmlFor="credential-risk-level">Risk level</Label>
+        <select
+          id="credential-risk-level"
+          className="h-10 w-full rounded-md border border-input bg-input/20 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 dark:bg-input/30"
+          value={draft.riskLevel ?? "low"}
+          onChange={(event) =>
+            updateDraft("riskLevel", event.target.value as RiskLevel)
+          }
+        >
+          <option value="low">Low Risk</option>
+          <option value="medium">Medium Risk</option>
+          <option value="high">High Risk</option>
+        </select>
+      </div>
+
+      <div className="space-y-2">
         <Label htmlFor="credential-notes">Notes (optional)</Label>
         <textarea
           id="credential-notes"
@@ -205,14 +247,36 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
         {message}
       </p>
 
-      <Button
-        className="h-11 w-full px-4 text-sm"
-        type="submit"
-        disabled={busy}
-      >
-        <Plus className="size-4" aria-hidden="true" />
-        {busy ? "Encrypting and saving…" : "Save credential"}
-      </Button>
+      {isEditing ? (
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          {onCancel ? (
+            <Button
+              className="h-11 px-4 text-sm"
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+          ) : null}
+          <Button
+            className="h-11 px-4 text-sm sm:flex-1"
+            type="submit"
+            disabled={busy}
+          >
+            {busy ? "Encrypting and saving…" : "Save changes"}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          className="h-11 w-full px-4 text-sm"
+          type="submit"
+          disabled={busy}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          {busy ? "Encrypting and saving…" : "Save credential"}
+        </Button>
+      )}
     </form>
   )
 }
