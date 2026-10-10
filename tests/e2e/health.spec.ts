@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises"
 
 import { expect, test } from "@playwright/test"
 
+test.use({ storageState: { cookies: [], origins: [] } })
+
 test("shows saved password warnings and their reasons", async ({
   page,
 }, testInfo) => {

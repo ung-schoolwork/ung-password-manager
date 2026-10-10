@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises"
 
 import { expect, test } from "@playwright/test"
 
+test.use({ storageState: { cookies: [], origins: [] } })
+
 const vaultPassword = "correct horse battery staple"
 
 test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async ({

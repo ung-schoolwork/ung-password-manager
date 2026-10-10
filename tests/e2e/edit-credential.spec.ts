@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test"
 
+test.use({ storageState: { cookies: [], origins: [] } })
+
 const vaultPassword = "correct horse battery staple"
 
 test("edits a saved credential with prefilled details, supports cancel, and persists changes", async ({
