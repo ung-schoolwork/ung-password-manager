@@ -21,6 +21,7 @@ export function VaultWorkspace() {
         credentials={credentials}
         onAddCredential={() => setAddOpen(true)}
         onEditCredential={setCredentialToEdit}
+        editingCredentialId={credentialToEdit?.id ?? null}
       />
       <AddCredentialDialog open={addOpen} onOpenChange={setAddOpen} />
       {credentialToEdit ? (

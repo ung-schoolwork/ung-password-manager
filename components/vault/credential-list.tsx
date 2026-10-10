@@ -16,10 +16,12 @@ export function CredentialList({
   credentials,
   onAddCredential,
   onEditCredential,
+  editingCredentialId,
 }: {
   credentials: Credential[]
   onAddCredential(): void
   onEditCredential(credential: Credential): void
+  editingCredentialId: string | null
 }) {
   return (
     <Card className="min-w-0">
@@ -68,6 +70,7 @@ export function CredentialList({
               <li key={credential.id}>
                 <CredentialRow
                   credential={credential}
+                  editing={credential.id === editingCredentialId}
                   onEdit={() => onEditCredential(credential)}
                 />
               </li>
@@ -81,9 +84,11 @@ export function CredentialList({
 
 function CredentialRow({
   credential,
+  editing,
   onEdit,
 }: {
   credential: Credential
+  editing: boolean
   onEdit(): void
 }) {
   return (
@@ -142,10 +147,12 @@ function CredentialRow({
           <Pencil className="size-4" aria-hidden="true" />
           Edit
         </Button>
-        <CredentialCopyActions
-          username={credential.username}
-          password={credential.password}
-        />
+        {editing ? null : (
+          <CredentialCopyActions
+            username={credential.username}
+            password={credential.password}
+          />
+        )}
       </div>
     </article>
   )
