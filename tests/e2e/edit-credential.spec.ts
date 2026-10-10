@@ -7,22 +7,33 @@ test("edits a saved credential with prefilled details, supports cancel, and pers
 }) => {
   await page.goto("/")
 
+  // 1. Wait for vault gate to finish loading
+  await expect(
+    page.getByRole("heading", { name: "Create your vault" })
+  ).toBeVisible()
+
   await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
   await page.getByLabel("Confirm vault password").fill(vaultPassword)
   await page.getByRole("button", { name: "Create encrypted vault" }).click()
 
-  // Add initial credential
-  await page.getByLabel("Account label").fill("University email")
-  await page.getByLabel("Website or app").fill("mail.example.edu")
-  await page.getByLabel("Username").fill("student@example.edu")
-  await page.getByLabel("Password", { exact: true }).fill("InitialSecret123!")
-  await page.getByLabel("Risk level").selectOption("medium")
-  await page.getByLabel("Notes (optional)").fill("Old notes")
-  await page.getByRole("button", { name: "Save credential" }).click()
+  // 2. Wait for redirect and initial Add Credential dialog
+  await expect(page).toHaveURL(/\/vault$/)
+  const addDialog = page.getByRole("dialog", { name: "Add a credential" })
+  await expect(addDialog).toBeVisible()
 
+  // 3. Fill and save initial credential
+  await addDialog.getByLabel("Account label").fill("University email")
+  await addDialog.getByLabel("Website or app").fill("mail.example.edu")
+  await addDialog.getByLabel("Username").fill("student@example.edu")
+  await addDialog.getByLabel("Password", { exact: true }).fill("InitialSecret123!")
+  await addDialog.getByLabel("Risk level").selectOption("medium")
+  await addDialog.getByLabel("Notes (optional)").fill("Old notes")
+  await addDialog.getByRole("button", { name: "Save credential" }).click()
+
+  await expect(addDialog).toBeHidden()
   await expect(page.getByText("University email", { exact: true })).toBeVisible()
 
-  // 1. Open saved credential with current details
+  // 4. Open saved credential with current details
   const credentialItem = page
     .getByRole("list", { name: "Saved credentials" })
     .getByRole("listitem")
@@ -37,14 +48,14 @@ test("edits a saved credential with prefilled details, supports cancel, and pers
   await expect(editDialog.getByLabel("Risk level")).toHaveValue("medium")
   await expect(editDialog.getByLabel("Notes (optional)")).toHaveValue("Old notes")
 
-  // 2. Test Cancel without modifying
+  // 5. Test Cancel without modifying
   await editDialog.getByLabel("Account label").fill("Should not be saved")
   await editDialog.getByRole("button", { name: "Cancel" }).click()
   await expect(editDialog).toBeHidden()
   await expect(page.getByText("University email", { exact: true })).toBeVisible()
   await expect(page.getByText("Should not be saved")).toHaveCount(0)
 
-  // 3. Edit all details and save changes
+  // 6. Edit all details and save changes
   await credentialItem.getByRole("button", { name: "Edit" }).click()
   await expect(editDialog).toBeVisible()
 
@@ -61,7 +72,7 @@ test("edits a saved credential with prefilled details, supports cancel, and pers
   await expect(page.getByText("portal.example.edu")).toBeVisible()
   await expect(page.getByText("student-updated@example.edu")).toBeVisible()
 
-  // 4. Changes remain after reload and unlock
+  // 7. Changes remain after reload and unlock
   await page.reload()
   await expect(page.getByRole("heading", { name: "Unlock your vault" })).toBeVisible()
   await page.getByLabel("Vault password").fill(vaultPassword)
