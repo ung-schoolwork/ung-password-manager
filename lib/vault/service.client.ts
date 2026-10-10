@@ -1,4 +1,4 @@
-import { decryptVault, encryptVault } from "@/lib/vault/crypto.client"
+﻿import { decryptVault, encryptVault } from "@/lib/vault/crypto.client"
 import type { VaultRepository } from "@/lib/vault/repository.client"
 import {
   VAULT_DATA_VERSION,
@@ -120,10 +120,24 @@ export class VaultService {
   ): Promise<Credential> {
     const { data } = this.requireUnlocked()
     const existing = data.credentials.find((credential) => credential.id === id)
-    if (!existing) throw new Error("Credential not found.")
+    
+    if (!existing) {
+      throw new Error("Credential not found.")
+    }
 
-    const normalized = validateCredentialDraft({ ...existing, ...patch })
+    // Merge explicitly to prevent partial/undefined overrides causing validation side-effects
+    const mergedDraft: CredentialDraft = {
+      accountName: patch.accountName ?? existing.accountName,
+      siteOrApp: patch.siteOrApp ?? existing.siteOrApp,
+      username: patch.username ?? existing.username,
+      password: patch.password ?? existing.password,
+      notes: patch.notes ?? existing.notes,
+      riskLevel: patch.riskLevel ?? existing.riskLevel,
+    }
+
+    const normalized = validateCredentialDraft(mergedDraft)
     const timestamp = this.dependencies.now().toISOString()
+    
     const updated: Credential = {
       ...existing,
       ...normalized,
