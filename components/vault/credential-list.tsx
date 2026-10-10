@@ -1,4 +1,4 @@
-import { KeyRound, Plus, ShieldCheck } from "lucide-react"
+import { KeyRound, Pencil, Plus, ShieldCheck } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -15,9 +15,11 @@ import type { Credential } from "@/lib/vault/types"
 export function CredentialList({
   credentials,
   onAddCredential,
+  onEditCredential,
 }: {
   credentials: Credential[]
   onAddCredential(): void
+  onEditCredential(credential: Credential): void
 }) {
   return (
     <Card className="min-w-0">
@@ -64,7 +66,10 @@ export function CredentialList({
           <ul className="flex flex-col gap-2" aria-label="Saved credentials">
             {credentials.map((credential) => (
               <li key={credential.id}>
-                <CredentialRow credential={credential} />
+                <CredentialRow
+                  credential={credential}
+                  onEdit={() => onEditCredential(credential)}
+                />
               </li>
             ))}
           </ul>
@@ -74,7 +79,13 @@ export function CredentialList({
   )
 }
 
-function CredentialRow({ credential }: { credential: Credential }) {
+function CredentialRow({
+  credential,
+  onEdit,
+}: {
+  credential: Credential
+  onEdit(): void
+}) {
   return (
     <article
       className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5"
@@ -120,10 +131,22 @@ function CredentialRow({ credential }: { credential: Credential }) {
         </div>
       </dl>
 
-      <CredentialCopyActions
-        username={credential.username}
-        password={credential.password}
-      />
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <Button
+          className="h-9 px-3 text-sm"
+          type="button"
+          variant="outline"
+          aria-label={`Edit ${credential.accountName}`}
+          onClick={onEdit}
+        >
+          <Pencil className="size-4" aria-hidden="true" />
+          Edit
+        </Button>
+        <CredentialCopyActions
+          username={credential.username}
+          password={credential.password}
+        />
+      </div>
     </article>
   )
 }
