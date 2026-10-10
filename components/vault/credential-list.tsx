@@ -127,7 +127,7 @@ function CredentialRow({
             ••••••••
           </dd>
           {credential.notes ? (
-            <div className="hidden min-w-0 items-center gap-2 sm:flex">
+            <div className="flex min-w-0 items-center gap-2">
               <span aria-hidden="true">·</span>
               <dt className="sr-only">Notes</dt>
               <dd className="truncate">{credential.notes}</dd>
