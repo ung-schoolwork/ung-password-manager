@@ -1,7 +1,14 @@
 "use client"
 
 import { useState, type FormEvent } from "react"
-import { ChevronDown, Eye, EyeOff, Plus, WandSparkles } from "lucide-react"
+import {
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Plus,
+  Save,
+  WandSparkles,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,7 +21,12 @@ import {
 import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
 import { useVault } from "@/components/vault/vault-provider"
 import { cn } from "@/lib/utils"
-import type { CredentialDraft } from "@/lib/vault/types"
+import {
+  RISK_LEVELS,
+  type Credential,
+  type CredentialDraft,
+  type RiskLevel,
+} from "@/lib/vault/types"
 import {
   CredentialValidationError,
   type CredentialField,
@@ -29,12 +41,29 @@ const EMPTY_DRAFT: CredentialDraft = {
 }
 
 export interface CredentialFormProps {
+  credential?: Credential
+  onCancel?(): void
   onSaved?(): void
 }
 
-export function CredentialForm({ onSaved }: CredentialFormProps) {
-  const { addCredential, busy } = useVault()
-  const [draft, setDraft] = useState<CredentialDraft>(EMPTY_DRAFT)
+export function CredentialForm({
+  credential,
+  onCancel,
+  onSaved,
+}: CredentialFormProps) {
+  const { addCredential, updateCredential, busy } = useVault()
+  const [draft, setDraft] = useState<CredentialDraft>(() =>
+    credential
+      ? {
+          accountName: credential.accountName,
+          siteOrApp: credential.siteOrApp,
+          username: credential.username,
+          password: credential.password,
+          notes: credential.notes ?? "",
+          riskLevel: credential.riskLevel ?? "low",
+        }
+      : EMPTY_DRAFT
+  )
   const [errors, setErrors] = useState<
     Partial<Record<CredentialField, string>>
   >({})
@@ -65,8 +94,12 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
     setMessage(null)
 
     try {
-      await addCredential(draft)
-      setDraft(EMPTY_DRAFT)
+      if (credential) {
+        await updateCredential(credential.id, draft)
+      } else {
+        await addCredential(draft)
+        setDraft(EMPTY_DRAFT)
+      }
       setShowPassword(false)
       onSaved?.()
     } catch (caught) {
@@ -201,20 +234,68 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
         />
       </div>
 
+      {credential ? (
+        <div className="space-y-2">
+          <Label htmlFor="credential-risk-level">Risk level</Label>
+          <select
+            id="credential-risk-level"
+            className="h-10 w-full rounded-md border border-input bg-input/20 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 dark:bg-input/30"
+            value={draft.riskLevel ?? "low"}
+            onChange={(event) => {
+              const value = event.currentTarget.value
+              if (isRiskLevel(value)) updateDraft("riskLevel", value)
+            }}
+          >
+            {RISK_LEVELS.map((riskLevel) => (
+              <option key={riskLevel} value={riskLevel}>
+                {riskLevel[0].toUpperCase() + riskLevel.slice(1)}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
       <p className="min-h-5 text-xs text-muted-foreground" aria-live="polite">
         {message}
       </p>
 
-      <Button
-        className="h-11 w-full px-4 text-sm"
-        type="submit"
-        disabled={busy}
-      >
-        <Plus className="size-4" aria-hidden="true" />
-        {busy ? "Encrypting and saving…" : "Save credential"}
-      </Button>
+      <div className={credential ? "grid grid-cols-2 gap-2" : undefined}>
+        <Button
+          className="h-11 w-full px-4 text-sm"
+          type="submit"
+          disabled={busy}
+        >
+          {credential ? (
+            <Save className="size-4" aria-hidden="true" />
+          ) : (
+            <Plus className="size-4" aria-hidden="true" />
+          )}
+          {busy
+            ? credential
+              ? "Saving changes…"
+              : "Encrypting and saving…"
+            : credential
+              ? "Save changes"
+              : "Save credential"}
+        </Button>
+        {credential && onCancel ? (
+          <Button
+            className="h-11 w-full px-4 text-sm"
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        ) : null}
+      </div>
     </form>
   )
+}
+
+function isRiskLevel(value: string): value is RiskLevel {
+  return RISK_LEVELS.some((riskLevel) => riskLevel === value)
 }
 
 interface FieldProps {

@@ -140,6 +140,99 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
   ).toBeVisible()
 })
 
+test("edits a saved credential, cancels safely, and keeps changes after unlocking", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
+  await page.getByLabel("Confirm vault password").fill(vaultPassword)
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+
+  await page.getByLabel("Account label").fill("University email")
+  await page.getByLabel("Website or app").fill("mail.example.edu")
+  await page.getByLabel("Username").fill("student@example.edu")
+  await page.getByLabel("Password", { exact: true }).fill("OriginalDemo!123456")
+  await page
+    .getByLabel("Notes (optional)")
+    .fill("Original recovery details.")
+  await page.getByRole("button", { name: "Save credential" }).click()
+
+  await page.getByRole("button", { name: "Edit University email" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Edit credential" })
+  ).toBeVisible()
+  await expect(page.getByLabel("Account label")).toHaveValue("University email")
+  await expect(page.getByLabel("Website or app")).toHaveValue(
+    "mail.example.edu"
+  )
+  await expect(page.getByLabel("Username")).toHaveValue("student@example.edu")
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "OriginalDemo!123456"
+  )
+  await expect(page.getByLabel("Notes (optional)")).toHaveValue(
+    "Original recovery details."
+  )
+
+  await page.getByLabel("Account label").fill("Changed but canceled")
+  await page.getByLabel("Risk level").selectOption("high")
+  await page.getByRole("button", { name: "Cancel" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Edit credential" })
+  ).toBeHidden()
+  await expect(page.getByText("University email", { exact: true })).toBeVisible()
+  await expect(
+    page.getByText("Changed but canceled", { exact: true })
+  ).toBeHidden()
+
+  await page.getByRole("button", { name: "Edit University email" }).click()
+  await expect(page.getByLabel("Account label")).toHaveValue("University email")
+  await expect(page.getByLabel("Risk level")).toHaveValue("low")
+  await page.getByLabel("Account label").fill("Updated university account")
+  await page.getByLabel("Website or app").fill("accounts.example.edu")
+  await page.getByLabel("Username").fill("updated-student@example.edu")
+  await page.getByLabel("Password", { exact: true }).fill("UpdatedDemo!654321")
+  await page.getByLabel("Notes (optional)").fill("Updated recovery details.")
+  await page.getByLabel("Risk level").selectOption("high")
+  await page.getByRole("button", { name: "Save changes" }).click()
+
+  await expect(
+    page.getByText("Updated university account", { exact: true })
+  ).toBeVisible()
+  await expect(page.getByText("accounts.example.edu")).toBeVisible()
+  await expect(page.getByText("updated-student@example.edu")).toBeVisible()
+  await expect(page.getByText("Updated recovery details.")).toBeVisible()
+
+  await page.reload()
+  await expect(
+    page.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+  await page.getByLabel("Vault password").fill(vaultPassword)
+  await page.getByRole("button", { name: "Unlock vault" }).click()
+  await expect(
+    page.getByText("Updated university account", { exact: true })
+  ).toBeVisible()
+
+  await page
+    .getByRole("button", { name: "Edit Updated university account" })
+    .click()
+  await expect(page.getByLabel("Account label")).toHaveValue(
+    "Updated university account"
+  )
+  await expect(page.getByLabel("Website or app")).toHaveValue(
+    "accounts.example.edu"
+  )
+  await expect(page.getByLabel("Username")).toHaveValue(
+    "updated-student@example.edu"
+  )
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "UpdatedDemo!654321"
+  )
+  await expect(page.getByLabel("Notes (optional)")).toHaveValue(
+    "Updated recovery details."
+  )
+  await expect(page.getByLabel("Risk level")).toHaveValue("high")
+})
+
 test("previews generated passwords live on the generator page", async ({
   page,
 }) => {

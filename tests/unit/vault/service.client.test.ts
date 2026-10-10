@@ -101,7 +101,7 @@ describe("VaultService", () => {
     expect(service.listCredentials()).toEqual([])
   })
 
-  it("changes passwordUpdatedAt only when the password changes", async () => {
+  it("persists edited details and changes passwordUpdatedAt only for a new password", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository, [
       "2026-09-22T00:00:00.000Z",
@@ -111,15 +111,31 @@ describe("VaultService", () => {
     await service.createVault(passphrase)
     const saved = await service.saveCredential(validDraft)
 
-    const renamed = await service.updateCredential(saved.id, {
+    const edited = await service.updateCredential(saved.id, {
       accountName: "Renamed portal",
+      siteOrApp: "portal.new.example.edu",
+      username: "new-student",
+      notes: "Use the new recovery process.",
+      riskLevel: "high",
     })
-    expect(renamed.passwordUpdatedAt).toBe(saved.passwordUpdatedAt)
+    expect(edited.passwordUpdatedAt).toBe(saved.passwordUpdatedAt)
 
     const changedPassword = await service.updateCredential(saved.id, {
       password: "AnotherDemoOnly!654321",
     })
     expect(changedPassword.passwordUpdatedAt).toBe("2026-09-24T00:00:00.000Z")
+
+    service.lockVault()
+    const reloadedService = createService(repository)
+    await reloadedService.unlockVault(passphrase)
+    expect(reloadedService.listCredentials()).toEqual([
+      expect.objectContaining({
+        ...edited,
+        password: "AnotherDemoOnly!654321",
+        updatedAt: "2026-09-24T00:00:00.000Z",
+        passwordUpdatedAt: "2026-09-24T00:00:00.000Z",
+      }),
+    ])
   })
   it("does not restore decrypted state when locked during vault creation", async () => {
     const repository = new MemoryVaultRepository()
