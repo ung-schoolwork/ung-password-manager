@@ -10,7 +10,7 @@ A team software-engineering project for a secure, accessible password-manager we
 - shadcn/ui with Base UI primitives
 - Bun for dependency management and scripts
 
-Email/password registration and sign-in use MongoDB Atlas through Mongoose. Each account has a separate client-encrypted vault in this browser and a configurable cryptographically secure password generator. Account sign-in never unlocks the vault. Remote encrypted-vault persistence, migration, and approved-device synchronization remain separate work.
+Email/password registration and sign-in use MongoDB Atlas through Mongoose. Each account has a separate client-encrypted vault saved through its account and a configurable cryptographically secure password generator. Encryption and decryption run in the browser; the server receives only the encrypted envelope. Account sign-in never unlocks the vault. Approved-device synchronization remains separate SCRUM-26 work.
 
 ## Where the code lives
 
@@ -29,7 +29,15 @@ tests/e2e/           playwright tests that drive the real browser
 
 Vault encryption and credential operations run in the browser. `lib/vault/service.client.ts` is the one place
 that ties the pieces together: it validates a credential, encrypts the whole
-vault, and hands it to `repository.client.ts` to store. Start there.
+vault, and hands it to `remote.client.ts` to save through the account. Start there.
+
+## Account vault storage
+
+`/api/vault` persists one encrypted vault per authenticated account. `GET` returns `{ envelope, revision }`, with both values null when the account has no saved vault. `PUT` accepts `{ envelope, expectedRevision }`: null creates a vault only if none exists; a matching revision updates it atomically. A stale revision or concurrent create returns 409 without overwriting the current vault. Ownership comes only from the authenticated session, never from a request-supplied account ID.
+
+Writes require the exact configured origin and a validated version-1 encrypted envelope. Request bodies are capped at 1 MiB, including chunked bodies. Only ciphertext and encryption metadata are stored; these routes do not decrypt vaults. The database needs permission to create the unique account-vault index. Authentication failures return 401, invalid payloads 400, and unavailable storage 503; responses are not cached.
+
+The browser repository remembers the revision loaded with the encrypted envelope and sends it with each save. Decrypted state is committed only after a successful save. Failed saves retain the credential draft and display an error; conflicts require reopening the latest vault before retrying. A fresh browser can sign in and retrieve the same encrypted vault, but still needs its separate vault password.
 
 ## Development
 
@@ -41,11 +49,11 @@ Mongoose creates unique account/session indexes and expiration indexes for sessi
 
 Sign-out does not send a cookie-clearing header: a delayed logout response must not erase a newer login from another tab. The revoked token may remain in the HttpOnly cookie until it expires or is overwritten by the next login, but the server no longer accepts it.
 
-Account mutations are serialized across tabs with Web Locks where supported. A durable, non-sensitive sign-out generation also invalidates outstanding authentication when Web Locks are unavailable and cross-tab notifications arrive late, even after logout completes. The session created by a successful authentication response invalidated by sign-out is explicitly revoked, so its cookie cannot authorize requests. A non-sensitive pending-sign-out flag keeps the app signed out across reloads if revocation fails; retrying sign-out (or signing in again) completes revocation before further authentication. Normal sign-out preserves encrypted vault data. If browser storage is unavailable, only the in-memory guard is available; local vault persistence also cannot work in that environment.
+Account mutations are serialized across tabs with Web Locks where supported. A durable, non-sensitive sign-out generation also invalidates outstanding authentication when Web Locks are unavailable and cross-tab notifications arrive late, even after logout completes. The session created by a successful authentication response invalidated by sign-out is explicitly revoked, so its cookie cannot authorize requests. A non-sensitive pending-sign-out flag keeps the app signed out across reloads if revocation fails; retrying sign-out (or signing in again) completes revocation before further authentication. Normal sign-out preserves encrypted vault data. If browser storage is unavailable, the durable cross-tab sign-out guard and local migration are unavailable; remote vault persistence does not require local storage.
 
 Registration signs the new account in. Duplicate registration returns a generic error, but its status differs from success, so registration can reveal whether an email is already registered. Email verification and a privacy-preserving registration flow are outside this ticket.
 
-Existing pre-account local vaults are left untouched at their original storage key. They are not silently assigned to a registered account or overwritten. Explicit migration belongs to SCRUM-41. Account-specific local keys separate the UI's vaults, but do not isolate same-origin storage from malicious scripts.
+Existing pre-account and account-specific local vaults are never adopted automatically. When no remote vault exists, users can explicitly choose an existing vault and enter its password. The browser validates and decrypts it before copying only its encrypted envelope through the account. A concurrent remote create prevents migration; existing remote vaults are never silently overwritten. Original local copies remain untouched on success or failure. Local keys do not isolate same-origin storage from malicious scripts.
 
 ```bash
 bun install

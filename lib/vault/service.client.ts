@@ -1,10 +1,12 @@
 import { decryptVault, encryptVault } from "@/lib/vault/crypto.client"
 import type { VaultRepository } from "@/lib/vault/repository.client"
+import { VaultConflictError } from "@/lib/vault/remote"
 import {
   VAULT_DATA_VERSION,
   type Credential,
   type CredentialDraft,
   type VaultDataV1,
+  type VaultEnvelopeV1,
 } from "@/lib/vault/types"
 import {
   validateCredentialDraft,
@@ -20,14 +22,14 @@ export class VaultLockedError extends Error {
 
 export class VaultAlreadyExistsError extends Error {
   constructor() {
-    super("A vault already exists in this browser.")
+    super("A vault already exists. Refresh the page to open it.")
     this.name = "VaultAlreadyExistsError"
   }
 }
 
 export class VaultNotFoundError extends Error {
   constructor() {
-    super("No saved vault was found in this browser.")
+    super("No saved vault was found.")
     this.name = "VaultNotFoundError"
   }
 }
@@ -79,6 +81,20 @@ export class VaultService {
     this.passphrase = passphrase
   }
 
+  async migrateVault(
+    passphrase: string,
+    envelope: VaultEnvelopeV1
+  ): Promise<void> {
+    const generation = ++this.generation
+    if (await this.hasVault()) throw new VaultAlreadyExistsError()
+    this.assertCurrent(generation)
+    const data = await decryptVault(passphrase, envelope)
+    this.assertCurrent(generation)
+    await this.repository.save(envelope)
+    this.assertCurrent(generation)
+    this.data = data
+    this.passphrase = passphrase
+  }
   async unlockVault(passphrase: string): Promise<void> {
     const generation = ++this.generation
     const envelope = await this.repository.load()
@@ -176,9 +192,11 @@ export class VaultService {
 
   private async persist(data: VaultDataV1): Promise<void> {
     const generation = this.generation
+    const baseline = this.data
     const { passphrase } = this.requireUnlocked()
     const envelope = await encryptVault(passphrase, data)
     this.assertCurrent(generation)
+    if (this.data !== baseline) throw new VaultConflictError()
     await this.repository.save(envelope)
     this.assertCurrent(generation)
     this.data = data

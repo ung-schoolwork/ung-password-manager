@@ -8,7 +8,6 @@ export const VAULT_STORAGE_KEY = "ung-password-manager:vault:v1"
 export interface VaultRepository {
   load(): Promise<VaultEnvelopeV1 | null>
   save(envelope: VaultEnvelopeV1): Promise<void>
-  clear(): Promise<void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
