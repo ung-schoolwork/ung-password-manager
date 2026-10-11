@@ -21,11 +21,17 @@ export function VaultGate() {
     busy,
     initializationError,
     createVault,
+    localVaultSources,
+    migrateVault,
     unlockVault,
   } = useVault()
   const [passphrase, setPassphrase] = useState("")
   const [confirmation, setConfirmation] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [migrating, setMigrating] = useState(false)
+  const [selectedSource, setSelectedSource] = useState<
+    "account" | "legacy" | null
+  >(null)
 
   if (status === "loading") {
     return (
@@ -46,7 +52,9 @@ export function VaultGate() {
             <div className="mb-2 flex size-11 items-center justify-center rounded-full bg-destructive/10 text-destructive">
               <AlertTriangle className="size-5" aria-hidden="true" />
             </div>
-            <h1 className="font-heading text-xl font-medium">Vault unavailable</h1>
+            <h1 className="font-heading text-xl font-medium">
+              Vault unavailable
+            </h1>
             <CardDescription className="text-sm">
               {initializationError}
             </CardDescription>
@@ -56,11 +64,27 @@ export function VaultGate() {
     )
   }
 
-  const creating = status === "needs-setup"
+  const creating = status === "needs-setup" && !migrating
+  const usingExisting = status === "needs-setup" && migrating
+  const source =
+    selectedSource && localVaultSources.includes(selectedSource)
+      ? selectedSource
+      : localVaultSources[0]
+
+  function switchMode(useExisting: boolean) {
+    if (busy) return
+    setMigrating(useExisting)
+    setSelectedSource(null)
+    setPassphrase("")
+    setConfirmation("")
+    setError(null)
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+
+    if (busy) return
 
     if (creating && passphrase !== confirmation) {
       setError("The vault passwords do not match.")
@@ -68,13 +92,18 @@ export function VaultGate() {
     }
 
     try {
-      if (creating) await createVault(passphrase)
+      if (usingExisting) {
+        if (!source) throw new Error("No existing vault is available.")
+        await migrateVault(source, passphrase)
+      } else if (creating) await createVault(passphrase)
       else await unlockVault(passphrase)
       setPassphrase("")
       setConfirmation("")
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "The vault could not be opened."
+        caught instanceof Error
+          ? caught.message
+          : "The vault could not be opened."
       )
     }
   }
@@ -92,17 +121,47 @@ export function VaultGate() {
           </div>
           <div>
             <h1 className="font-heading text-2xl font-medium">
-              {creating ? "Create your vault" : "Unlock your vault"}
+              {usingExisting
+                ? "Use your existing vault"
+                : creating
+                  ? "Create your vault"
+                  : "Unlock your vault"}
             </h1>
             <CardDescription className="mt-1 text-sm">
-              {creating
-                ? "Choose a vault password to protect your credentials."
-                : "Enter your vault password to continue."}
+              {usingExisting
+                ? "Enter its vault password. Your existing vault will be kept."
+                : creating
+                  ? "Choose a vault password to protect your credentials."
+                  : "Enter your vault password to continue."}
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent>
           <form className="space-y-5" onSubmit={handleSubmit}>
+            {usingExisting && localVaultSources.length > 1 ? (
+              <div className="space-y-2">
+                <Label htmlFor="existing-vault">Existing vault</Label>
+                <select
+                  id="existing-vault"
+                  className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                  value={source ?? ""}
+                  onChange={(event) =>
+                    setSelectedSource(
+                      event.target.value as "account" | "legacy"
+                    )
+                  }
+                  disabled={busy}
+                >
+                  {localVaultSources.map((vaultSource) => (
+                    <option key={vaultSource} value={vaultSource}>
+                      {vaultSource === "account"
+                        ? "This account’s vault"
+                        : "Earlier vault"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="vault-passphrase">Vault password</Label>
               <Input
@@ -110,6 +169,7 @@ export function VaultGate() {
                 className="h-11 px-3 text-sm"
                 type="password"
                 value={passphrase}
+                disabled={busy}
                 onChange={(event) => setPassphrase(event.target.value)}
                 autoComplete={creating ? "new-password" : "current-password"}
                 minLength={creating ? MASTER_PASSPHRASE_MIN_LENGTH : undefined}
@@ -117,9 +177,12 @@ export function VaultGate() {
                 aria-describedby={creating ? "vault-password-help" : undefined}
               />
               {creating ? (
-                <p id="vault-password-help" className="text-xs text-muted-foreground">
-                  Use at least {MASTER_PASSPHRASE_MIN_LENGTH} characters and choose
-                  something memorable and hard to guess.
+                <p
+                  id="vault-password-help"
+                  className="text-xs text-muted-foreground"
+                >
+                  Use at least {MASTER_PASSPHRASE_MIN_LENGTH} characters and
+                  choose something memorable and hard to guess.
                 </p>
               ) : null}
             </div>
@@ -134,6 +197,7 @@ export function VaultGate() {
                   className="h-11 px-3 text-sm"
                   type="password"
                   value={confirmation}
+                  disabled={busy}
                   onChange={(event) => setConfirmation(event.target.value)}
                   autoComplete="new-password"
                   required
@@ -156,15 +220,30 @@ export function VaultGate() {
               disabled={busy}
             >
               {busy
-                ? creating
-                  ? "Creating encrypted vault…"
-                  : "Unlocking…"
-                : creating
-                  ? "Create encrypted vault"
-                  : "Unlock vault"}
+                ? usingExisting
+                  ? "Using existing vault…"
+                  : creating
+                    ? "Creating encrypted vault…"
+                    : "Unlocking…"
+                : usingExisting
+                  ? "Use this vault"
+                  : creating
+                    ? "Create encrypted vault"
+                    : "Unlock vault"}
             </Button>
           </form>
-
+          {status === "needs-setup" &&
+          (usingExisting || localVaultSources.length > 0) ? (
+            <Button
+              className="mt-3 w-full"
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => switchMode(!usingExisting)}
+            >
+              {usingExisting ? "Create a new vault" : "Use an existing vault"}
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
     </main>

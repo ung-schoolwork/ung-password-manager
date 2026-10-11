@@ -80,10 +80,19 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
   ).toBeVisible({ visible: !isMobile })
 
   const identity = await (await page.request.get("/api/auth/session")).json()
-  const persistedVault = await page.evaluate(
-    (id) => localStorage.getItem(`ung-password-manager:vault:v1:account:${id}`),
-    identity.user.id
-  )
+  const remote = await page.request.get("/api/vault")
+  expect(remote.status()).toBe(200)
+  const snapshot = await remote.json()
+  expect(snapshot.envelope).toBeTruthy()
+  expect(snapshot.revision).toEqual(expect.any(String))
+  const persistedVault = JSON.stringify(snapshot)
+  expect(
+    await page.evaluate(
+      (id) =>
+        localStorage.getItem(`ung-password-manager:vault:v1:account:${id}`),
+      identity.user.id
+    )
+  ).toBeNull()
   expect(persistedVault).toBeTruthy()
   expect(persistedVault).not.toContain("University email")
   expect(persistedVault).not.toContain("mail.example.edu")
