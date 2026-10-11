@@ -1,4 +1,7 @@
-import { KeyRound, Pencil, Plus, ShieldCheck, Upload } from "lucide-react"
+"use client"
+
+import { useMemo } from "react"
+import { KeyRound, Pencil, Plus, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -10,6 +13,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
+import { HealthShield } from "@/components/vault/health-shield"
+import {
+  analyzeCredentialsHealth,
+  type CredentialHealthReport,
+} from "@/lib/vault/health"
 import type { Credential } from "@/lib/vault/types"
 
 export function CredentialList({
@@ -25,6 +33,11 @@ export function CredentialList({
   onEditCredential(credential: Credential): void
   editingCredentialId: string | null
 }) {
+  const audited = useMemo(
+    () => analyzeCredentialsHealth(credentials),
+    [credentials]
+  )
+
   return (
     <Card className="min-w-0">
       <CardHeader>
@@ -77,7 +90,7 @@ export function CredentialList({
           </div>
         ) : (
           <ul className="flex flex-col gap-2" aria-label="Saved credentials">
-            {credentials.map((credential) => (
+            {audited.map((credential) => (
               <li key={credential.id}>
                 <CredentialRow
                   credential={credential}
@@ -98,22 +111,24 @@ function CredentialRow({
   editing,
   onEdit,
 }: {
-  credential: Credential
+  credential: CredentialHealthReport
   editing: boolean
   onEdit(): void
 }) {
+  const hasWarnings = credential.warnings.length > 0
+  const status = !hasWarnings
+    ? "success"
+    : credential.riskLevel === "high"
+      ? "danger"
+      : "warning"
+
   return (
     <article
       className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center sm:px-3 sm:py-2.5"
       data-credential-id={credential.id}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div
-          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground ring-1 ring-border"
-          title="Encrypted in the saved vault"
-        >
-          <ShieldCheck className="size-4" aria-hidden="true" />
-        </div>
+        <HealthShield status={status} size="sm" />
 
         <dl className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">
