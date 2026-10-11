@@ -10,11 +10,12 @@ import {
   type ReactNode,
 } from "react"
 
+import { RemoteVaultRepository } from "@/lib/vault/remote.client"
 import {
-  LocalStorageVaultRepository,
-  VAULT_STORAGE_KEY,
-  type VaultRepository,
-} from "@/lib/vault/repository.client"
+  localVaultSources as findLocalVaultSources,
+  readLocalVault,
+  type LocalVaultSource,
+} from "@/lib/vault/local-migration.client"
 import { VaultService } from "@/lib/vault/service.client"
 import type { Credential, CredentialDraft } from "@/lib/vault/types"
 
@@ -25,6 +26,8 @@ interface VaultContextValue {
   credentials: Credential[]
   busy: boolean
   initializationError: string | null
+  localVaultSources: LocalVaultSource[]
+  migrateVault(source: LocalVaultSource, passphrase: string): Promise<void>
   createVault(passphrase: string): Promise<void>
   unlockVault(passphrase: string): Promise<void>
   lockVault(): void
@@ -49,23 +52,34 @@ export function VaultProvider({
   const [status, setStatus] = useState<VaultStatus>("loading")
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [busy, setBusy] = useState(false)
+  const [localVaultSources, setLocalVaultSources] = useState<
+    LocalVaultSource[]
+  >([])
   const [initializationError, setInitializationError] = useState<string | null>(
     null
   )
 
   useEffect(() => {
     let active = true
-    const repository: VaultRepository = new LocalStorageVaultRepository(
-      window.localStorage,
-      `${VAULT_STORAGE_KEY}:account:${accountId}`
-    )
+    const repository = new RemoteVaultRepository()
     const service = new VaultService(repository)
     serviceRef.current = service
 
     void service
       .hasVault()
       .then((hasVault) => {
-        if (active) setStatus(hasVault ? "locked" : "needs-setup")
+        if (!active) return
+        if (!hasVault) {
+          try {
+            setLocalVaultSources(
+              findLocalVaultSources(window.localStorage, accountId)
+            )
+          } catch {
+            // Remote vaults remain usable when local storage is unavailable.
+            setLocalVaultSources([])
+          }
+        }
+        setStatus(hasVault ? "locked" : "needs-setup")
       })
       .catch(() => {
         if (!active) return
@@ -108,6 +122,28 @@ export function VaultProvider({
     [refreshCredentials, requireService]
   )
 
+  const migrateVault = useCallback(
+    async (source: LocalVaultSource, passphrase: string) => {
+      const service = requireService()
+      setBusy(true)
+      try {
+        let storage: Storage
+        try {
+          storage = window.localStorage
+        } catch {
+          throw new Error("Your existing vault could not be opened.")
+        }
+        const envelope = readLocalVault(storage, accountId, source)
+        await service.migrateVault(passphrase, envelope)
+        if (serviceRef.current !== service) return
+        refreshCredentials(service)
+        setStatus("unlocked")
+      } finally {
+        setBusy(false)
+      }
+    },
+    [accountId, refreshCredentials, requireService]
+  )
   const unlockVault = useCallback(
     async (passphrase: string) => {
       const service = requireService()
@@ -181,6 +217,8 @@ export function VaultProvider({
         credentials,
         busy,
         initializationError,
+        localVaultSources,
+        migrateVault,
         createVault,
         unlockVault,
         lockVault,

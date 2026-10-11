@@ -92,6 +92,9 @@ test("isolates accounts without adopting the pre-account local vault", async ({
   await page.goto("/vault")
   await createVault(page)
   await page.getByRole("button", { name: "Close", exact: true }).click()
+  const firstVault = await page.request.get("/api/vault")
+  expect(firstVault.status()).toBe(200)
+  expect((await firstVault.json()).envelope).toBeTruthy()
   await page.getByRole("button", { name: "Sign out", exact: true }).click()
   await expect
     .poll(async () => (await page.request.get("/api/auth/session")).status())
@@ -106,13 +109,16 @@ test("isolates accounts without adopting the pre-account local vault", async ({
       localStorage.getItem("ung-password-manager:vault:v1")
     )
   ).toBe("legacy-kept-untouched")
+  const otherVault = await page.request.get("/api/vault")
+  expect(otherVault.status()).toBe(200)
+  expect(await otherVault.json()).toEqual({ envelope: null, revision: null })
   expect(
     await page.evaluate(
       (id) =>
         localStorage.getItem(`ung-password-manager:vault:v1:account:${id}`),
       first.id
     )
-  ).toBeTruthy()
+  ).toBeNull()
 })
 
 test("sign-out in another tab removes unlocked credentials and forms", async ({

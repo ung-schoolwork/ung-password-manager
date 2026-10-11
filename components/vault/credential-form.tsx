@@ -201,7 +201,11 @@ export function CredentialForm({ onSaved }: CredentialFormProps) {
         />
       </div>
 
-      <p className="min-h-5 text-xs text-muted-foreground" aria-live="polite">
+      <p
+        className="min-h-5 text-xs text-destructive"
+        role={message ? "alert" : undefined}
+        aria-live="polite"
+      >
         {message}
       </p>
 

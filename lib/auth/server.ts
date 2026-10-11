@@ -281,7 +281,7 @@ export async function issueSession(
   return response
 }
 
-// Future owner-scoped server routes must check this verified identity, not a client-supplied ID.
+// Owner-scoped routes use this verified identity, never a client-supplied ID.
 export async function authenticatedUser(
   request: Request
 ): Promise<{ id: string; email: string } | null> {
