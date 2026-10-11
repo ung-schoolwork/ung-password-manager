@@ -30,28 +30,56 @@ const REQUIRED_FIELDS = [
   "password",
 ] as const
 
+const FIELD_LABELS: Record<keyof typeof HEADER_ALIASES, string> = {
+  accountName: "account label",
+  siteOrApp: "website or app",
+  username: "username",
+  password: "password",
+  notes: "notes",
+}
+
+type CsvRecord = { line: number; fields: string[] }
+
 /**
- * Parses one line of CSV text into fields, honoring double-quoted
- * values that may contain commas or escaped quotes ("").
+ * Splits CSV text into records, honoring double-quoted values that may
+ * contain commas, line breaks, or escaped quotes (""). Fields are not
+ * trimmed so passwords keep their exact characters.
  */
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = []
+function parseCsvRecords(text: string): CsvRecord[] {
+  const records: CsvRecord[] = []
+  let fields: string[] = []
   let current = ""
   let inQuotes = false
+  let line = 1
+  let recordLine = 1
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i]
+  const endRecord = () => {
+    fields.push(current)
+    if (fields.some((field) => field.trim().length > 0)) {
+      records.push({ line: recordLine, fields })
+    }
+    fields = []
+    current = ""
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    const isLineBreak = char === "\n" || char === "\r"
+    if (isLineBreak) {
+      if (char === "\r" && text[i + 1] === "\n") i++
+      line++
+    }
 
     if (inQuotes) {
       if (char === '"') {
-        if (line[i + 1] === '"') {
+        if (text[i + 1] === '"') {
           current += '"'
           i++
         } else {
           inQuotes = false
         }
       } else {
-        current += char
+        current += isLineBreak ? "\n" : char
       }
       continue
     }
@@ -61,17 +89,16 @@ function parseCsvLine(line: string): string[] {
     } else if (char === ",") {
       fields.push(current)
       current = ""
+    } else if (isLineBreak) {
+      endRecord()
+      recordLine = line
     } else {
       current += char
     }
   }
 
-  fields.push(current)
-  return fields.map((field) => field.trim())
-}
-
-function splitIntoLines(text: string): string[] {
-  return text.split(/\r\n|\r|\n/).filter((line) => line.trim().length > 0)
+  if (current.length > 0 || fields.length > 0) endRecord()
+  return records
 }
 
 function buildHeaderMap(
@@ -81,7 +108,9 @@ function buildHeaderMap(
 
   headerRow.forEach((rawHeader, index) => {
     const normalized = rawHeader.trim().toLowerCase()
-    for (const field of Object.keys(HEADER_ALIASES) as (keyof typeof HEADER_ALIASES)[]) {
+    for (const field of Object.keys(
+      HEADER_ALIASES
+    ) as (keyof typeof HEADER_ALIASES)[]) {
       if (map[field] !== undefined) continue
       if (HEADER_ALIASES[field].includes(normalized)) {
         map[field] = index
@@ -97,14 +126,13 @@ function buildHeaderMap(
  * that need attention (missing required fields, unreadable row, etc).
  */
 export function parseCredentialsCsv(text: string): ImportParseResult {
-  const lines = splitIntoLines(text)
+  const [header, ...records] = parseCsvRecords(text)
 
-  if (lines.length === 0) {
+  if (!header) {
     return { rows: [], okCount: 0, issueCount: 0 }
   }
 
-  const headerRow = parseCsvLine(lines[0])
-  const headerMap = buildHeaderMap(headerRow)
+  const headerMap = buildHeaderMap(header.fields)
 
   const missingRequired = REQUIRED_FIELDS.filter(
     (field) => headerMap[field] === undefined
@@ -114,25 +142,25 @@ export function parseCredentialsCsv(text: string): ImportParseResult {
 
   if (missingRequired.length > 0) {
     // Header itself is unusable — every data row needs attention.
-    for (let i = 1; i < lines.length; i++) {
+    const labels = missingRequired.map((field) => FIELD_LABELS[field])
+    for (const record of records) {
       rows.push({
-        line: i + 1,
+        line: record.line,
         status: "issue",
-        reason: `Missing required column(s): ${missingRequired.join(", ")}`,
-        raw: parseCsvLine(lines[i]),
+        reason: `The file has no ${labels.join(", ")} column.`,
+        raw: record.fields,
       })
     }
     return { rows, okCount: 0, issueCount: rows.length }
   }
 
-  for (let i = 1; i < lines.length; i++) {
-    const fields = parseCsvLine(lines[i])
-    const lineNumber = i + 1
-
+  for (const { line: lineNumber, fields } of records) {
+    // Passwords are kept exactly as written; other fields are trimmed.
     const get = (field: keyof typeof HEADER_ALIASES): string => {
       const index = headerMap[field]
       if (index === undefined || index >= fields.length) return ""
-      return fields[index] ?? ""
+      const value = fields[index] ?? ""
+      return field === "password" ? value : value.trim()
     }
 
     const accountName = get("accountName")
@@ -141,13 +169,15 @@ export function parseCredentialsCsv(text: string): ImportParseResult {
     const password = get("password")
     const notes = get("notes")
 
-    const missingFields = REQUIRED_FIELDS.filter((field) => get(field) === "")
+    const missingFields = REQUIRED_FIELDS.filter(
+      (field) => get(field).trim() === ""
+    )
 
     if (missingFields.length > 0) {
       rows.push({
         line: lineNumber,
         status: "issue",
-        reason: `Missing ${missingFields.join(", ")}`,
+        reason: `Missing ${missingFields.map((field) => FIELD_LABELS[field]).join(", ")}.`,
         raw: fields,
       })
       continue
