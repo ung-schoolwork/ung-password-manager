@@ -1,4 +1,4 @@
-import { KeyRound, Pencil, Plus, ShieldCheck } from "lucide-react"
+import { KeyRound, Pencil, Plus, ShieldCheck, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -15,11 +15,13 @@ import type { Credential } from "@/lib/vault/types"
 export function CredentialList({
   credentials,
   onAddCredential,
+  onImportCredentials,
   onEditCredential,
   editingCredentialId,
 }: {
   credentials: Credential[]
   onAddCredential(): void
+  onImportCredentials(): void
   onEditCredential(credential: Credential): void
   editingCredentialId: string | null
 }) {
@@ -32,7 +34,16 @@ export function CredentialList({
             ? "Your vault is empty."
             : `${credentials.length} saved ${credentials.length === 1 ? "credential" : "credentials"}.`}
         </CardDescription>
-        <CardAction>
+        <CardAction className="flex gap-2">
+          <Button
+            className="h-9 px-3 text-sm"
+            type="button"
+            variant="outline"
+            onClick={onImportCredentials}
+          >
+            <Upload className="size-4" aria-hidden="true" />
+            Import credentials
+          </Button>
           <Button
             className="h-9 px-3 text-sm"
             type="button"
