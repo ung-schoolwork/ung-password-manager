@@ -5,7 +5,7 @@ import { Geist_Mono, Inter } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { VaultApp } from "@/components/vault/vault-app"
+import { AccountApp } from "@/components/auth/account-app"
 import { cn } from "@/lib/utils"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
@@ -37,7 +37,7 @@ export default function RootLayout({
     >
       <body>
         <ThemeProvider>
-          <VaultApp>{children}</VaultApp>
+          <AccountApp>{children}</AccountApp>
         </ThemeProvider>
       </body>
     </html>
