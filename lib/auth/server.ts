@@ -73,7 +73,9 @@ export function failure() {
 }
 export function originAllowed(request: Request) {
   const origin = process.env.APP_ORIGIN
-  if (!origin) return false
+  // With no APP_ORIGIN, any origin may call the API outside production.
+  // Production still fails closed so a missing setting never opens it up.
+  if (!origin) return process.env.NODE_ENV !== "production"
   try {
     return (
       new URL(origin).origin === origin &&
