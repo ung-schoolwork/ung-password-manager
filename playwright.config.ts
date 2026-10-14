@@ -13,9 +13,12 @@ export default defineConfig({
   },
   webServer: {
     command: "bun run dev --hostname 127.0.0.1 --port 3100",
-    env: { APP_ORIGIN: "http://127.0.0.1:3100" },
+    env: {
+      APP_ORIGIN: "http://127.0.0.1:3100",
+      AUTH_TRUSTED_IP_HEADER: "x-e2e-client-ip",
+    },
     url: "http://127.0.0.1:3100",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [

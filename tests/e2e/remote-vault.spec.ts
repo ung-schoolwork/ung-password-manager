@@ -1,5 +1,5 @@
 import { request as httpRequest } from "node:http"
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 import { encryptVault, decryptVault } from "../../lib/vault/crypto.client"
 import { registerAccount, vaultPassword } from "./account-helpers"
 

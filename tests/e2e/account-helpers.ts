@@ -1,12 +1,17 @@
 import { expect, type Page } from "@playwright/test"
+import { setTestClientIp } from "./fixtures"
 
 export const accountPassword = "account-password-only-123"
 export const vaultPassword = "vault-password-only-456"
 
 export async function registerAccount(page: Page) {
+  const clientIp = await setTestClientIp(page.context())
   const email = `browser-${crypto.randomUUID()}@example.test`
   const response = await page.request.post("/api/auth/register", {
-    headers: { Origin: "http://127.0.0.1:3100" },
+    headers: {
+      Origin: "http://127.0.0.1:3100",
+      "x-e2e-client-ip": clientIp,
+    },
     data: { email, password: accountPassword },
   })
   expect(response.status()).toBe(201)
