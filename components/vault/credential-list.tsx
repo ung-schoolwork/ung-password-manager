@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo } from "react"
-import { KeyRound, Pencil, Plus, Upload } from "lucide-react"
+import { useMemo, useState } from "react"
+import { KeyRound, Pencil, Plus, Share2, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
 import { HealthShield } from "@/components/vault/health-shield"
+import { ShareCredentialDialog } from "@/components/vault/share-credential-dialog"
 import {
   analyzeCredentialsHealth,
   type CredentialHealthReport,
@@ -37,6 +38,8 @@ export function CredentialList({
     () => analyzeCredentialsHealth(credentials),
     [credentials]
   )
+  const [credentialToShare, setCredentialToShare] =
+    useState<Credential | null>(null)
 
   return (
     <Card className="min-w-0">
@@ -96,12 +99,23 @@ export function CredentialList({
                   credential={credential}
                   editing={credential.id === editingCredentialId}
                   onEdit={() => onEditCredential(credential)}
+                  onShare={() => setCredentialToShare(credential)}
                 />
               </li>
             ))}
           </ul>
         )}
       </CardContent>
+
+      {credentialToShare ? (
+        <ShareCredentialDialog
+          credential={credentialToShare}
+          open
+          onOpenChange={(open) => {
+            if (!open) setCredentialToShare(null)
+          }}
+        />
+      ) : null}
     </Card>
   )
 }
@@ -110,10 +124,12 @@ function CredentialRow({
   credential,
   editing,
   onEdit,
+  onShare,
 }: {
   credential: CredentialHealthReport
   editing: boolean
   onEdit(): void
+  onShare(): void
 }) {
   const hasWarnings = credential.warnings.length > 0
   const status = !hasWarnings
@@ -170,16 +186,28 @@ function CredentialRow({
       </div>
 
       <div className="flex shrink-0 flex-col items-end gap-2 border-t pt-2 sm:border-t-0 sm:pt-0">
-        <Button
-          className="h-9 px-3 text-sm"
-          type="button"
-          variant="outline"
-          aria-label={`Edit ${credential.accountName}`}
-          onClick={onEdit}
-        >
-          <Pencil className="size-4" aria-hidden="true" />
-          Edit
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            className="h-9 px-3 text-sm"
+            type="button"
+            variant="outline"
+            aria-label={`Share ${credential.accountName}`}
+            onClick={onShare}
+          >
+            <Share2 className="size-4" aria-hidden="true" />
+            Share
+          </Button>
+          <Button
+            className="h-9 px-3 text-sm"
+            type="button"
+            variant="outline"
+            aria-label={`Edit ${credential.accountName}`}
+            onClick={onEdit}
+          >
+            <Pencil className="size-4" aria-hidden="true" />
+            Edit
+          </Button>
+        </div>
         {editing ? null : (
           <CredentialCopyActions
             username={credential.username}

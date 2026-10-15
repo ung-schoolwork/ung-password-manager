@@ -1,14 +1,8 @@
-import type { NextConfig } from "next"
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [
-    "**.com",
-    "**.dev",
-    "**.app",
-    "**.io",
-    "**.net",
-    "**.org",
-  ],
-}
+  serverExternalPackages: ["mongoose"],
+  // ...el resto de tu config que ya tengas
+};
 
-export default nextConfig
+export default nextConfig;
