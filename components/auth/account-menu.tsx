@@ -48,6 +48,9 @@ export function AccountMenu({
   const [code, setCode] = useState("")
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(
+    null
+  )
   const queryClient = useQueryClient()
   const devicesKey = ["devices", accountId]
 
@@ -76,11 +79,13 @@ export function AccountMenu({
   const remove = useMutation({
     mutationFn: removeDevice,
     onSuccess: () => {
+      setConfirmingRemoval(null)
       setError(null)
       setNotice("Device removed. It can no longer open your vault.")
       void queryClient.invalidateQueries({ queryKey: devicesKey })
     },
     onError: (caught) => {
+      setConfirmingRemoval(null)
       setNotice(null)
       setError(errorMessage(caught, "The device could not be removed."))
     },
@@ -144,36 +149,73 @@ export function AccountMenu({
               {devices.data.map((device) => (
                 <li
                   key={device.id}
-                  className="flex items-center gap-3 rounded-md border px-3 py-2"
+                  className="space-y-2 rounded-md border px-3 py-2"
                 >
-                  <MonitorSmartphone
-                    className="size-4 shrink-0 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {device.name}
-                      {device.current ? (
-                        <span className="ml-2 text-xs font-normal text-muted-foreground">
-                          This device
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Last active {lastActive(device.lastSeenAt)}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <MonitorSmartphone
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {device.name}
+                        {device.current ? (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            This device
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Last active {lastActive(device.lastSeenAt)}
+                      </p>
+                    </div>
+                    {device.current ||
+                    confirmingRemoval === device.id ? null : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label={`Remove ${device.name}`}
+                        disabled={remove.isPending}
+                        onClick={() => {
+                          setNotice(null)
+                          setError(null)
+                          setConfirmingRemoval(device.id)
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    )}
                   </div>
-                  {device.current ? null : (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      aria-label={`Remove ${device.name}`}
-                      disabled={remove.isPending}
-                      onClick={() => remove.mutate(device.id)}
+                  {confirmingRemoval === device.id ? (
+                    <div
+                      role="group"
+                      aria-label={`Confirm removing ${device.name}`}
+                      className="space-y-2"
                     >
-                      Remove
-                    </Button>
-                  )}
+                      <p className="text-sm">
+                        Remove {device.name}? It will need to be approved again
+                        before it can open your vault.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          disabled={remove.isPending}
+                          onClick={() => remove.mutate(device.id)}
+                        >
+                          Remove device
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={remove.isPending}
+                          onClick={() => setConfirmingRemoval(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

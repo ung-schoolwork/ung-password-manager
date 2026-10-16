@@ -182,7 +182,18 @@ test("a removed device loses access and goes back to waiting for approval", asyn
   const own = page.getByRole("listitem").filter({ hasText: "This device" })
   await expect(own).toBeVisible()
   expect(await own.getByRole("button").count()).toBe(0)
+  // Removing asks for confirmation, and cancelling keeps the device.
   await page.getByRole("button", { name: /^Remove / }).click()
+  const confirm = page.getByRole("group", { name: /^Confirm removing / })
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole("button", { name: "Cancel", exact: true }).click()
+  await expect(confirm).toHaveCount(0)
+  expect((await second.context.request.get("/api/vault")).status()).toBe(200)
+
+  await page.getByRole("button", { name: /^Remove / }).click()
+  await confirm
+    .getByRole("button", { name: "Remove device", exact: true })
+    .click()
   await expect(
     page.getByRole("status").filter({ hasText: "Device removed" })
   ).toBeVisible()
