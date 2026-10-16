@@ -48,6 +48,7 @@ export class VaultService {
   private data: VaultDataV1 | null = null
   private passphrase: string | null = null
   private generation = 0
+  private queue: Promise<unknown> = Promise.resolve()
 
   constructor(
     private readonly repository: VaultRepository,
@@ -104,6 +105,30 @@ export class VaultService {
     this.assertCurrent(generation)
     this.data = data
     this.passphrase = passphrase
+  }
+
+  /** Revision of the vault this service last loaded or saved, if versioned. */
+  knownRevision(): string | null {
+    return this.repository.currentRevision?.() ?? null
+  }
+
+  /**
+   * Replaces the unlocked data with the saved vault when another device changed
+   * it. Runs after any save in progress so a save is never built on stale data.
+   */
+  async refresh(): Promise<boolean> {
+    const generation = this.generation
+    const { passphrase } = this.requireUnlocked()
+    return this.exclusive(async () => {
+      this.assertCurrent(generation)
+      const envelope = await this.repository.load()
+      this.assertCurrent(generation)
+      if (!envelope) throw new VaultNotFoundError()
+      const data = await decryptVault(passphrase, envelope)
+      this.assertCurrent(generation)
+      this.data = data
+      return true
+    })
   }
 
   lockVault(): void {
@@ -190,15 +215,23 @@ export class VaultService {
     return { data: this.data, passphrase: this.passphrase }
   }
 
+  private exclusive<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(work, work)
+    this.queue = result.catch(() => undefined)
+    return result
+  }
+
   private async persist(data: VaultDataV1): Promise<void> {
     const generation = this.generation
     const baseline = this.data
     const { passphrase } = this.requireUnlocked()
-    const envelope = await encryptVault(passphrase, data)
-    this.assertCurrent(generation)
-    if (this.data !== baseline) throw new VaultConflictError()
-    await this.repository.save(envelope)
-    this.assertCurrent(generation)
-    this.data = data
+    await this.exclusive(async () => {
+      const envelope = await encryptVault(passphrase, data)
+      this.assertCurrent(generation)
+      if (this.data !== baseline) throw new VaultConflictError()
+      await this.repository.save(envelope)
+      this.assertCurrent(generation)
+      this.data = data
+    })
   }
 }

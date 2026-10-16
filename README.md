@@ -10,7 +10,7 @@ A team software-engineering project for a secure, accessible password-manager we
 - shadcn/ui with Base UI primitives
 - Bun for dependency management and scripts
 
-Email/password registration and sign-in use MongoDB Atlas through Mongoose. Each account has a separate client-encrypted vault saved through its account and a configurable cryptographically secure password generator. Encryption and decryption run in the browser; the server receives only the encrypted envelope. Account sign-in never unlocks the vault. Approved-device synchronization remains separate SCRUM-26 work.
+Email/password registration and sign-in use MongoDB Atlas through Mongoose. Each account has a separate client-encrypted vault saved through its account and a configurable cryptographically secure password generator. Encryption and decryption run in the browser; the server receives only the encrypted envelope. Account sign-in never unlocks the vault. Vault changes sync between the account's approved devices.
 
 ## Where the code lives
 
@@ -37,7 +37,15 @@ vault, and hands it to `remote.client.ts` to save through the account. Start the
 
 Writes require the exact configured origin and a validated version-1 encrypted envelope. Request bodies are capped at 1 MiB, including chunked bodies. Only ciphertext and encryption metadata are stored; these routes do not decrypt vaults. The database needs permission to create the unique account-vault index. Authentication failures return 401, invalid payloads 400, and unavailable storage 503; responses are not cached.
 
-The browser repository remembers the revision loaded with the encrypted envelope and sends it with each save. Decrypted state is committed only after a successful save. Failed saves retain the credential draft and display an error; conflicts require reopening the latest vault before retrying. A fresh browser can sign in and retrieve the same encrypted vault, but still needs its separate vault password.
+The browser repository remembers the revision loaded with the encrypted envelope and sends it with each save. Decrypted state is committed only after a successful save. Failed saves retain the credential draft and display an error; conflicts require reopening the latest vault before retrying. A fresh browser can sign in and retrieve the same encrypted vault once it is an approved device, but still needs its separate vault password.
+
+## Approved devices and sync
+
+Each browser is identified by a long-lived, HttpOnly device cookie and registered against the signed-in account. The first device on an account is approved automatically. Every later device shows an eight-digit approval code, valid for ten minutes, and cannot read, write, or poll the vault until an approved device enters that code from the account menu. Approval attempts are rate-limited per account.
+
+`/api/vault` and `/api/vault/revision` return 403 to unapproved devices. An open vault polls the revision every 15 seconds and when the tab regains focus. When another device has saved a newer revision, the browser fetches it and decrypts it with the vault password held by the unlocked session, and a save built on the replaced data is rejected as a conflict instead of overwriting it.
+
+`/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
 
 ## Development
 
@@ -82,4 +90,5 @@ docker stop ung-auth-test
 ```
 
 Integration tests use Node because the workspace's Bun 1.2 runtime cannot load Mongoose's BSON dependency. Browser tests register unique accounts against real routes; they do not bypass authentication. The Playwright server sets its own exact test origin. Only use disposable test databases.
+
 > This project is under development. Do not store real credentials in it.

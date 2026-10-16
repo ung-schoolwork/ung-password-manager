@@ -29,3 +29,21 @@ export async function createVault(page: Page) {
     page.getByRole("dialog", { name: "Add a credential" })
   ).toBeVisible()
 }
+
+/** Reads the code a signed-in but unapproved device shows while it waits. */
+export async function approvalCode(page: Page) {
+  await expect(
+    page.getByRole("heading", { name: "Approve this device" })
+  ).toBeVisible()
+  const text = await page.getByLabel("Device approval code").innerText()
+  const code = text.replace(/\s/g, "")
+  expect(code).toMatch(/^\d{8}$/)
+  return code
+}
+
+/** Approves a waiting device's code from an already approved device. */
+export async function approve(page: Page, code: string) {
+  await page.getByRole("button", { name: "Signed-in account" }).click()
+  await page.getByLabel("Add a device").fill(code)
+  await page.getByRole("button", { name: "Approve device" }).click()
+}
