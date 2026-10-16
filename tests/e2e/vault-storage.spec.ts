@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
+import type { Page } from "@playwright/test"
 import { encryptVault, decryptVault } from "../../lib/vault/crypto.client"
 import {
   accountPassword,
@@ -8,6 +9,7 @@ import {
   registerAccount,
   vaultPassword,
 } from "./account-helpers"
+import { setTestClientIp } from "./fixtures"
 
 const origin = "http://127.0.0.1:3100"
 
@@ -115,6 +117,7 @@ test("a local vault is migrated only after explicit consent and its password", a
   )
   const freshContext = await browser.newContext()
   try {
+    await setTestClientIp(freshContext)
     const freshPage = await freshContext.newPage()
     await freshPage.goto("/sign-in")
     await freshPage.getByLabel("Email", { exact: true }).fill(account.email)
