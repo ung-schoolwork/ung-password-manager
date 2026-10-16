@@ -4,6 +4,7 @@ import {
   json,
   originAllowed,
 } from "@/lib/auth/server"
+import { currentApprovedDevice } from "@/lib/devices/server"
 import { loadAccountVault, saveAccountVault } from "@/lib/vault/remote.server"
 import {
   MAX_VAULT_REQUEST_BYTES,
@@ -17,6 +18,8 @@ export async function GET(request: Request) {
   try {
     const user = await authenticatedUser(request)
     if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
     return json(await loadAccountVault(user.id))
   } catch {
     return failure()
@@ -28,6 +31,8 @@ export async function PUT(request: Request) {
   try {
     const user = await authenticatedUser(request)
     if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
     const write = await readWrite(request)
     if (!write) return json({ error: "Invalid encrypted vault" }, 400)
     return json(await saveAccountVault(user.id, write))
