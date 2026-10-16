@@ -7,6 +7,8 @@ import {
 } from "@playwright/test"
 import {
   accountPassword,
+  approvalCode,
+  approve,
   createVault,
   registerAccount,
   vaultPassword,
@@ -32,22 +34,6 @@ async function secondDevice(browser: Browser, email: string) {
     .fill(accountPassword)
   await page.getByRole("button", { name: "Sign in", exact: true }).click()
   return { context, page }
-}
-
-async function approvalCode(page: Page) {
-  await expect(
-    page.getByRole("heading", { name: "Approve this device" })
-  ).toBeVisible()
-  const text = await page.getByLabel("Device approval code").innerText()
-  const code = text.replace(/\s/g, "")
-  expect(code).toMatch(/^\d{8}$/)
-  return code
-}
-
-async function approve(page: Page, code: string) {
-  await page.getByRole("button", { name: "Signed-in account" }).click()
-  await page.getByLabel("Add a device").fill(code)
-  await page.getByRole("button", { name: "Approve device" }).click()
 }
 
 async function unlock(page: Page) {

@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test"
 import { encryptVault, decryptVault } from "../../lib/vault/crypto.client"
 import {
   accountPassword,
+  approvalCode,
+  approve,
   createVault,
   registerAccount,
   vaultPassword,
@@ -122,6 +124,8 @@ test("a local vault is migrated only after explicit consent and its password", a
     await freshPage
       .getByRole("button", { name: "Sign in", exact: true })
       .click()
+    // A fresh browser must be approved by a device that already has access.
+    await approve(page, await approvalCode(freshPage))
     await unlock(freshPage)
     await expect(
       freshPage.getByText("existing-user", { exact: true })
