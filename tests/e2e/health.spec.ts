@@ -1,11 +1,37 @@
 import { mkdir } from "node:fs/promises"
 
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 import { registerAccount } from "./account-helpers"
 
 test.beforeEach(async ({ page }) => {
   await registerAccount(page)
 })
+
+test("opens Health from a credential shield", async ({ page }) => {
+  await page.goto("/")
+  await page
+    .getByLabel("Vault password", { exact: true })
+    .fill("correct horse battery staple")
+  await page
+    .getByLabel("Confirm vault password")
+    .fill("correct horse battery staple")
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await page.getByLabel("Account label").fill("University email")
+  await page.getByLabel("Website or app").fill("mail.example.edu")
+  await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
+  await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+  await page.getByRole("button", { name: "Save credential" }).click()
+
+  await page
+    .getByRole("link", { name: "Password health for University email" })
+    .click()
+
+  await expect(page).toHaveURL(/\/health$/)
+  await expect(
+    page.getByText("Vault Password Health", { exact: true })
+  ).toBeVisible()
+})
+
 test("shows saved password warnings and their reasons", async ({
   page,
 }, testInfo) => {
@@ -26,7 +52,7 @@ test("shows saved password warnings and their reasons", async ({
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
 
-  await page.getByRole("link", { name: "Health" }).click()
+  await page.getByRole("link", { name: "Health", exact: true }).click()
   await expect(
     page.getByText("Vault Password Health", { exact: true })
   ).toBeVisible()
@@ -47,7 +73,7 @@ test("shows saved password warnings and their reasons", async ({
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
 
-  await page.getByRole("link", { name: "Health" }).click()
+  await page.getByRole("link", { name: "Health", exact: true }).click()
   const reports = page.getByRole("list", { name: "Password health reports" })
   await expect(reports.getByRole("listitem")).toHaveCount(2)
   await expect(reports.getByText("Reused:")).toHaveCount(2)

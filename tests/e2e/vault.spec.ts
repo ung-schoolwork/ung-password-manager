@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises"
 
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 import { registerAccount } from "./account-helpers"
 
 const vaultPassword = "correct horse battery staple"

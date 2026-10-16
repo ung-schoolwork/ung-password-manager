@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 import { accountPassword, registerAccount } from "./account-helpers"
 
 test("a late logout response does not erase a newer cross-tab login", async ({
