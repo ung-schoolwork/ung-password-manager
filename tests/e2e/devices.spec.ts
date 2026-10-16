@@ -1,10 +1,4 @@
-import {
-  expect,
-  test,
-  type Browser,
-  type BrowserContext,
-  type Page,
-} from "@playwright/test"
+import type { Browser, BrowserContext, Page } from "@playwright/test"
 import {
   accountPassword,
   approvalCode,
@@ -13,6 +7,7 @@ import {
   registerAccount,
   vaultPassword,
 } from "./account-helpers"
+import { expect, setTestClientIp, test } from "./fixtures"
 
 const origin = "http://127.0.0.1:3100"
 
@@ -26,6 +21,7 @@ async function firstDevice(page: Page) {
 
 async function secondDevice(browser: Browser, email: string) {
   const context = await browser.newContext()
+  await setTestClientIp(context)
   const page = await context.newPage()
   await page.goto("/sign-in")
   await page.getByLabel("Email", { exact: true }).fill(email)
@@ -121,6 +117,7 @@ test("codes are eight digits, belong to one account and cannot be guessed freely
 
   // Another account's approved device cannot use this account's code.
   const stranger = await browser.newContext()
+  await setTestClientIp(stranger)
   const strangerPage = await stranger.newPage()
   await registerAccount(strangerPage)
   const code = await approvalCode(second.page)
