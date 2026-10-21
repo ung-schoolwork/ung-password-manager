@@ -34,6 +34,21 @@ export class VaultNotFoundError extends Error {
   }
 }
 
+/**
+ * The credential changed or was deleted after the edit began. `latest` is the
+ * saved version to review, or null when it was deleted.
+ */
+export class CredentialConflictError extends Error {
+  constructor(readonly latest: Credential | null) {
+    super(
+      latest
+        ? "This credential was changed on another device while you were editing."
+        : "This credential was deleted on another device while you were editing."
+    )
+    this.name = "CredentialConflictError"
+  }
+}
+
 interface VaultServiceDependencies {
   now: () => Date
   createId: () => string
@@ -162,12 +177,37 @@ export class VaultService {
     return { ...credential }
   }
 
+  /**
+   * Applies an edit. Pass `basedOn`, the `updatedAt` of the copy the edit
+   * started from, so a newer change saved meanwhile is reported instead of
+   * overwritten.
+   */
   async updateCredential(
     id: string,
-    patch: Partial<CredentialDraft>
+    patch: Partial<CredentialDraft>,
+    basedOn?: string
+  ): Promise<Credential> {
+    try {
+      return await this.applyUpdate(id, patch, basedOn)
+    } catch (error) {
+      if (basedOn === undefined || !(error instanceof VaultConflictError))
+        throw error
+      // Another device saved first. Load its vault, then save again only if
+      // this credential is still the version the edit started from.
+      await this.refresh()
+      return this.applyUpdate(id, patch, basedOn)
+    }
+  }
+
+  private async applyUpdate(
+    id: string,
+    patch: Partial<CredentialDraft>,
+    basedOn: string | undefined
   ): Promise<Credential> {
     const { data } = this.requireUnlocked()
     const existing = data.credentials.find((credential) => credential.id === id)
+    if (basedOn !== undefined && existing?.updatedAt !== basedOn)
+      throw new CredentialConflictError(existing ? { ...existing } : null)
     if (!existing) throw new Error("Credential not found.")
 
     const normalized = validateCredentialDraft({ ...existing, ...patch })

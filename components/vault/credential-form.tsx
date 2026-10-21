@@ -21,6 +21,7 @@ import {
 import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
 import { useVault } from "@/components/vault/vault-provider"
 import { cn } from "@/lib/utils"
+import { CredentialConflictError } from "@/lib/vault/service.client"
 import {
   RISK_LEVELS,
   type Credential,
@@ -40,6 +41,34 @@ const EMPTY_DRAFT: CredentialDraft = {
   notes: "",
 }
 
+const FIELD_LABELS: Record<keyof CredentialDraft, string> = {
+  accountName: "account label",
+  siteOrApp: "website or app",
+  username: "username",
+  password: "password",
+  notes: "notes",
+  riskLevel: "risk level",
+}
+
+function draftOf(credential: Credential): CredentialDraft {
+  return {
+    accountName: credential.accountName,
+    siteOrApp: credential.siteOrApp,
+    username: credential.username,
+    password: credential.password,
+    notes: credential.notes ?? "",
+    riskLevel: credential.riskLevel ?? "low",
+  }
+}
+
+function changedFields(before: Credential, after: Credential): string[] {
+  const a = draftOf(before)
+  const b = draftOf(after)
+  return (Object.keys(FIELD_LABELS) as (keyof CredentialDraft)[])
+    .filter((key) => a[key] !== b[key])
+    .map((key) => FIELD_LABELS[key])
+}
+
 export interface CredentialFormProps {
   credential?: Credential
   onCancel?(): void
@@ -53,17 +82,15 @@ export function CredentialForm({
 }: CredentialFormProps) {
   const { addCredential, updateCredential, busy } = useVault()
   const [draft, setDraft] = useState<CredentialDraft>(() =>
-    credential
-      ? {
-          accountName: credential.accountName,
-          siteOrApp: credential.siteOrApp,
-          username: credential.username,
-          password: credential.password,
-          notes: credential.notes ?? "",
-          riskLevel: credential.riskLevel ?? "low",
-        }
-      : EMPTY_DRAFT
+    credential ? draftOf(credential) : EMPTY_DRAFT
   )
+  // The saved version this edit is based on. After a conflict it moves to the
+  // newer version, so saving again is a deliberate choice to replace it.
+  const [base, setBase] = useState(credential)
+  const [conflict, setConflict] = useState<{
+    latest: Credential | null
+    changed: string[]
+  } | null>(null)
   const [errors, setErrors] = useState<
     Partial<Record<CredentialField, string>>
   >({})
@@ -82,6 +109,13 @@ export function CredentialForm({
     setMessage(null)
   }
 
+  function loadLatest(latest: Credential) {
+    setDraft(draftOf(latest))
+    setErrors({})
+    setConflict(null)
+    setMessage(null)
+  }
+
   function applyGeneratedPassword(password: string) {
     updateDraft("password", password)
     setShowPassword(true)
@@ -95,7 +129,7 @@ export function CredentialForm({
 
     try {
       if (credential) {
-        await updateCredential(credential.id, draft)
+        await updateCredential(credential.id, draft, base?.updatedAt)
       } else {
         await addCredential(draft)
         setDraft(EMPTY_DRAFT)
@@ -105,6 +139,15 @@ export function CredentialForm({
     } catch (caught) {
       if (caught instanceof CredentialValidationError) {
         setErrors(caught.fields)
+        return
+      }
+      if (caught instanceof CredentialConflictError) {
+        setConflict({
+          latest: caught.latest,
+          changed:
+            caught.latest && base ? changedFields(base, caught.latest) : [],
+        })
+        if (caught.latest) setBase(caught.latest)
         return
       }
 
@@ -252,6 +295,42 @@ export function CredentialForm({
               </option>
             ))}
           </select>
+        </div>
+      ) : null}
+
+      {conflict ? (
+        <div
+          className="space-y-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm"
+          role="alert"
+        >
+          {conflict.latest ? (
+            <>
+              <p className="font-medium">
+                This credential was changed on another device while you were
+                editing.
+              </p>
+              <p className="text-muted-foreground">
+                {conflict.changed.length
+                  ? `Changed: ${conflict.changed.join(", ")}. `
+                  : null}
+                Load the latest version to review it, or save again to replace
+                it with your changes.
+              </p>
+              <Button
+                className="h-9 px-3 text-sm"
+                type="button"
+                variant="outline"
+                onClick={() => loadLatest(conflict.latest!)}
+              >
+                Load latest version
+              </Button>
+            </>
+          ) : (
+            <p className="font-medium">
+              This credential was deleted on another device while you were
+              editing.
+            </p>
+          )}
         </div>
       ) : null}
 
