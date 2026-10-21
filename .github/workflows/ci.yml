@@ -21,7 +21,10 @@ jobs:
       APP_ORIGIN: http://127.0.0.1:3100
     services:
       mongodb:
-        image: mongo:8
+        # Every MongoDB 8.x build refuses to start on Linux kernels 6.19 to
+        # 7.0.13, which the hosted runners now use. Move back to 8 once the
+        # runners reach kernel 7.0.14 or later.
+        image: mongo:7.0
         ports:
           - 27018:27017
         options: >-
