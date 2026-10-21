@@ -31,9 +31,9 @@ export async function POST(request: Request) {
   try {
     const user = await authenticatedUser(request)
     if (!user) return json({ error: "Not authenticated" }, 401)
-    const { state, newToken } = await ensureDevice(request, user.id)
+    const { state, deviceCookie } = await ensureDevice(request, user.id)
     const response = json(state)
-    if (newToken) setDeviceCookie(response, newToken)
+    if (deviceCookie) setDeviceCookie(response, deviceCookie)
     return response
   } catch {
     return failure()

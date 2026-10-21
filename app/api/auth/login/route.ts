@@ -31,8 +31,8 @@ export async function POST(request: Request) {
     )
       return json({ error: "Invalid credentials" }, 401)
     const response = await issueSession(user)
-    const { newToken } = await ensureDevice(request, String(user._id))
-    if (newToken) setDeviceCookie(response, newToken)
+    const { deviceCookie } = await ensureDevice(request, String(user._id))
+    if (deviceCookie) setDeviceCookie(response, deviceCookie)
     return response
   } catch (error) {
     if (error instanceof HashBusyError) return throttled(1)

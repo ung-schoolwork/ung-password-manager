@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "bun test tests/unit",
-    "test:integration": "node --import tsx --test tests/integration/auth/*.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/auth/*.test.ts",
     "test:e2e": "playwright test",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit"
