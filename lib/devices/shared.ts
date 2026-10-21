@@ -20,6 +20,13 @@ export class DeviceNotApprovedError extends Error {
   }
 }
 
+// Device IDs are 24-character hex object IDs; compare and look them up in
+// lowercase so a differently cased ID can never name the same device twice.
+export function normalizeDeviceId(value: string): string | null {
+  const id = value.trim().toLowerCase()
+  return /^[a-f0-9]{24}$/.test(id) ? id : null
+}
+
 export function normalizeDeviceCode(value: string): string | null {
   const digits = value.replace(/[\s-]/g, "")
   return new RegExp(`^\\d{${DEVICE_CODE_LENGTH}}$`).test(digits) ? digits : null
