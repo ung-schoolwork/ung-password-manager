@@ -23,6 +23,10 @@ const prefix = `same-browser-${randomUUID()}`
 const password = "correct-password-123"
 const sources: string[] = []
 const originalHeader = process.env.AUTH_TRUSTED_IP_HEADER
+const accountKeys: string[] = []
+// Sign-ins this file adds to the shared global limit, undone afterwards so
+// repeated runs do not exhaust it.
+let globalAttempts = 0
 
 // One browser's cookie jar, shared by every account that signs in on it.
 class Browser {
@@ -36,8 +40,16 @@ class Browser {
       .map(([name, value]) => `${name}=${value}`)
       .join("; ")
   }
-  device() {
-    return this.cookies.get("ung_device")
+  /** The device tokens this browser holds, one per account. */
+  deviceTokens() {
+    return (this.cookies.get("ung_device") ?? "").split(".").filter(Boolean)
+  }
+  setDeviceCookie(value: string) {
+    this.cookies.set("ung_device", value)
+  }
+  private counted(email: string) {
+    globalAttempts += 1
+    accountKeys.push(digest(`account:${this.ip}:${email}`))
   }
   store(response: Response) {
     for (const value of response.headers.getSetCookie()) {
@@ -60,16 +72,19 @@ class Browser {
     })
   }
   async register(email: string) {
+    this.counted(email)
     const response = this.store(
       await register(this.request("/api/auth", "POST", { email, password }))
     )
     assert.equal(response.status, 201)
   }
   async signIn(email: string) {
-    const response = this.store(
-      await login(this.request("/api/auth", "POST", { email, password }))
-    )
+    const response = this.store(await this.login(email))
     assert.equal(response.status, 200)
+  }
+  login(email: string) {
+    this.counted(email)
+    return login(this.request("/api/auth", "POST", { email, password }))
   }
   async signOut() {
     assert.equal((await logout(this.request("/api/auth/logout"))).status, 200)
@@ -119,8 +134,14 @@ after(async () => {
     .deleteMany({ ownerId: { $in: ids } })
   await User.deleteMany({ email: { $regex: `^${prefix}` } })
   await Attempt.deleteMany({
-    key: { $in: sources.map((ip) => digest(`source:${ip}`)) },
+    key: {
+      $in: [...sources.map((ip) => digest(`source:${ip}`)), ...accountKeys],
+    },
   })
+  await Attempt.updateOne(
+    { key: digest("global"), count: { $gte: globalAttempts } },
+    { $inc: { count: -globalAttempts } }
+  )
   await mongoose.disconnect()
   if (originalHeader === undefined) delete process.env.AUTH_TRUSTED_IP_HEADER
   else process.env.AUTH_TRUSTED_IP_HEADER = originalHeader
@@ -135,11 +156,15 @@ describe("two accounts on the same browser", () => {
     await browser.register(a)
     const first = await browser.state()
     assert.equal(first.approved, true)
-    const token = browser.device()
+    const [token] = browser.deviceTokens()
     await browser.signOut()
 
     await browser.register(b)
-    assert.equal(browser.device(), token, "the browser keeps its device token")
+    assert.ok(
+      browser.deviceTokens().includes(token),
+      "the browser keeps the first account's token"
+    )
+    assert.equal(browser.deviceTokens().length, 2)
     const second = await browser.state()
     assert.equal(second.approved, true, "B's first device is trusted")
     assert.notEqual(second.deviceId, first.deviceId)
@@ -192,5 +217,72 @@ describe("two accounts on the same browser", () => {
     const afterAll = await shared.state()
     assert.equal(afterAll.approved, true)
     assert.equal(afterAll.deviceId, aDevice.deviceId)
+  })
+
+  it("never trusts a token the browser was given by someone else", async () => {
+    const attacker = new Browser()
+    await attacker.register(accountEmail("attacker"))
+    const [attackerToken] = attacker.deviceTokens()
+    await attacker.signOut()
+
+    // Someone plants a made-up token, or their own account's token, before
+    // the victim signs up on this browser.
+    for (const [name, planted] of [
+      ["made-up", "ab".repeat(32)],
+      ["borrowed", attackerToken],
+    ]) {
+      const victim = accountEmail(`victim-${name}`)
+      const browser = new Browser()
+      browser.setDeviceCookie(planted)
+      await browser.register(victim)
+      assert.equal((await browser.state()).approved, true, name)
+      assert.notEqual(browser.deviceTokens()[0], planted, name)
+
+      // The planted token does not let another browser open the victim's vault.
+      const elsewhere = new Browser()
+      elsewhere.setDeviceCookie(planted)
+      await elsewhere.signIn(victim)
+      assert.equal((await elsewhere.state()).approved, false, name)
+      assert.equal(await elsewhere.canListDevices(), 403, name)
+    }
+  })
+
+  it("handles two sign-ins from the same browser at once", async () => {
+    const a = accountEmail("race-a")
+    const b = accountEmail("race-b")
+    const elsewhere = new Browser()
+    await elsewhere.register(b)
+    const browser = new Browser()
+    await browser.register(a)
+    await browser.signOut()
+
+    const responses = await Promise.all([browser.login(b), browser.login(b)])
+    assert.deepEqual(
+      responses.map((response) => response.status),
+      [200, 200]
+    )
+    browser.store(responses[1])
+    assert.equal((await browser.state()).approved, false)
+    await browser.signOut()
+    await browser.signIn(a)
+    assert.equal((await browser.state()).approved, true)
+  })
+
+  it("forgets only the account added longest ago once the browser is full", async () => {
+    const browser = new Browser()
+    const emails = Array.from({ length: 9 }, (_, n) =>
+      accountEmail(`many-${n}`)
+    )
+    for (const email of emails) {
+      await browser.register(email)
+      await browser.signOut()
+    }
+    assert.equal(browser.deviceTokens().length, 8)
+    await browser.signIn(emails[1])
+    assert.equal((await browser.state()).approved, true)
+    await browser.signOut()
+    // The first account's token was dropped, so it must approve this browser again.
+    await browser.signIn(emails[0])
+    assert.equal((await browser.state()).approved, false)
   })
 })
