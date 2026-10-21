@@ -11,17 +11,21 @@ interface HealthShieldProps {
   className?: string
 }
 
-export function HealthShield({ status, size = "md", className }: HealthShieldProps) {
+export function HealthShield({
+  status,
+  size = "md",
+  className,
+}: HealthShieldProps) {
   const sizeClasses = {
     sm: "size-6",
     md: "size-8",
-    lg: "size-11"
+    lg: "size-11",
   }
 
   const iconSizeClasses = {
     sm: "size-3.5",
     md: "size-4.5",
-    lg: "size-6"
+    lg: "size-6",
   }
 
   // Maps the status strings to your specific requested colors using Tailwind
@@ -29,7 +33,7 @@ export function HealthShield({ status, size = "md", className }: HealthShieldPro
     danger: "bg-red-600 text-white border-red-500",
     warning: "bg-yellow-400 text-black border-yellow-300",
     success: "bg-emerald-500 text-white border-emerald-400",
-    neutral: "bg-muted text-muted-foreground border-border"
+    neutral: "bg-muted text-muted-foreground border-border",
   }
 
   return (
@@ -42,10 +46,18 @@ export function HealthShield({ status, size = "md", className }: HealthShieldPro
       )}
     >
       {/* Exclamation for danger/warning, Checkmark for success */}
-      {status === "success" && <ShieldCheck className={iconSizeClasses[size]} strokeWidth={2.5} />}
-      {status === "danger" && <ShieldAlert className={iconSizeClasses[size]} strokeWidth={2.5} />}
-      {status === "warning" && <ShieldAlert className={iconSizeClasses[size]} strokeWidth={2.5} />}
-      {status === "neutral" && <Shield className={iconSizeClasses[size]} strokeWidth={2} />}
+      {status === "success" && (
+        <ShieldCheck className={iconSizeClasses[size]} strokeWidth={2.5} />
+      )}
+      {status === "danger" && (
+        <ShieldAlert className={iconSizeClasses[size]} strokeWidth={2.5} />
+      )}
+      {status === "warning" && (
+        <ShieldAlert className={iconSizeClasses[size]} strokeWidth={2.5} />
+      )}
+      {status === "neutral" && (
+        <Shield className={iconSizeClasses[size]} strokeWidth={2} />
+      )}
     </div>
   )
 }
