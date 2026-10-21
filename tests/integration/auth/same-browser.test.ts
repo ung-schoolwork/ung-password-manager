@@ -189,6 +189,7 @@ describe("two accounts on the same browser", () => {
     const bOwn = new Browser()
 
     await bOwn.register(b)
+    const bOwnId = (await bOwn.state()).deviceId
     await bOwn.signOut()
     await shared.register(a)
     const aDevice = await shared.state()
@@ -211,7 +212,11 @@ describe("two accounts on the same browser", () => {
     assert.ok(await approvePendingDevice(await ownerId(b), code))
     assert.equal((await shared.state()).approved, true)
     await shared.signOut()
-    assert.equal(await removeDevice(await ownerId(b), pending.deviceId), true)
+    // B's other device removes B's approval on the shared browser.
+    assert.equal(
+      await removeDevice(await ownerId(b), bOwnId, pending.deviceId),
+      "removed"
+    )
 
     await shared.signIn(a)
     const afterAll = await shared.state()
