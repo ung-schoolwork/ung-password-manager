@@ -32,9 +32,9 @@ function CardHeader({ className, ...props }: ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: ComponentProps<"div">) {
+function CardTitle({ className, ...props }: ComponentProps<"h3">) {
   return (
-    <div
+    <h3
       data-slot="card-title"
       className={cn("font-heading text-sm font-medium", className)}
       {...props}
