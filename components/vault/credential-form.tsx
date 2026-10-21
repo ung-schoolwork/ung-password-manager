@@ -21,6 +21,7 @@ import {
 import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
 import { useVault } from "@/components/vault/vault-provider"
 import { cn } from "@/lib/utils"
+import { mergeEdit, toDraft, type EditableField } from "@/lib/vault/edit-merge"
 import { CredentialConflictError } from "@/lib/vault/service.client"
 import {
   RISK_LEVELS,
@@ -41,33 +42,30 @@ const EMPTY_DRAFT: CredentialDraft = {
   notes: "",
 }
 
-const FIELD_LABELS: Record<keyof CredentialDraft, string> = {
-  accountName: "account label",
-  siteOrApp: "website or app",
-  username: "username",
-  password: "password",
-  notes: "notes",
-  riskLevel: "risk level",
+const FIELD_LABELS: Record<EditableField, string> = {
+  accountName: "Account label",
+  siteOrApp: "Website or app",
+  username: "Username",
+  password: "Password",
+  notes: "Notes",
+  riskLevel: "Risk level",
 }
 
-function draftOf(credential: Credential): CredentialDraft {
-  return {
-    accountName: credential.accountName,
-    siteOrApp: credential.siteOrApp,
-    username: credential.username,
-    password: credential.password,
-    notes: credential.notes ?? "",
-    riskLevel: credential.riskLevel ?? "low",
-  }
+// "the password", "the username and notes", "the username, password and notes"
+function describeFields(fields: EditableField[]) {
+  const names = fields.map((field) => FIELD_LABELS[field].toLowerCase())
+  const last = names.pop()
+  return `the ${names.length ? `${names.join(", ")} and ${last}` : last}`
 }
 
-function changedFields(before: Credential, after: Credential): string[] {
-  const a = draftOf(before)
-  const b = draftOf(after)
-  return (Object.keys(FIELD_LABELS) as (keyof CredentialDraft)[])
-    .filter((key) => a[key] !== b[key])
-    .map((key) => FIELD_LABELS[key])
-}
+type EditConflict =
+  | {
+      latest: Credential
+      message: string
+      updated: EditableField[]
+      bothChanged: EditableField[]
+    }
+  | { latest: null; message: string }
 
 export interface CredentialFormProps {
   credential?: Credential
@@ -82,15 +80,12 @@ export function CredentialForm({
 }: CredentialFormProps) {
   const { addCredential, updateCredential, busy } = useVault()
   const [draft, setDraft] = useState<CredentialDraft>(() =>
-    credential ? draftOf(credential) : EMPTY_DRAFT
+    credential ? toDraft(credential) : EMPTY_DRAFT
   )
-  // The saved version this edit is based on. After a conflict it moves to the
-  // newer version, so saving again is a deliberate choice to replace it.
-  const [base, setBase] = useState(credential)
-  const [conflict, setConflict] = useState<{
-    latest: Credential | null
-    changed: string[]
-  } | null>(null)
+  // The saved version this edit builds on. After a conflict it moves to the
+  // newer version, which the draft has been merged onto.
+  const [editBase, setEditBase] = useState(credential)
+  const [conflict, setConflict] = useState<EditConflict | null>(null)
   const [errors, setErrors] = useState<
     Partial<Record<CredentialField, string>>
   >({})
@@ -110,10 +105,41 @@ export function CredentialForm({
   }
 
   function loadLatest(latest: Credential) {
-    setDraft(draftOf(latest))
+    setDraft(toDraft(latest))
     setErrors({})
     setConflict(null)
     setMessage(null)
+  }
+
+  function showConflict(caught: CredentialConflictError) {
+    const { latest, message } = caught
+    if (!latest || !editBase) {
+      setConflict({ latest: null, message })
+      return
+    }
+    const merged = mergeEdit(toDraft(editBase), draft, toDraft(latest))
+    setDraft(merged.draft)
+    setEditBase(latest)
+    setConflict({ latest, message, ...merged })
+  }
+
+  async function saveAsNew() {
+    setMessage(null)
+    try {
+      await addCredential(draft)
+      setShowPassword(false)
+      onSaved?.()
+    } catch (caught) {
+      if (caught instanceof CredentialValidationError) {
+        setErrors(caught.fields)
+        return
+      }
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "The credential could not be saved."
+      )
+    }
   }
 
   function applyGeneratedPassword(password: string) {
@@ -129,7 +155,7 @@ export function CredentialForm({
 
     try {
       if (credential) {
-        await updateCredential(credential.id, draft, base?.updatedAt)
+        await updateCredential(credential.id, draft, editBase?.updatedAt)
       } else {
         await addCredential(draft)
         setDraft(EMPTY_DRAFT)
@@ -142,12 +168,7 @@ export function CredentialForm({
         return
       }
       if (caught instanceof CredentialConflictError) {
-        setConflict({
-          latest: caught.latest,
-          changed:
-            caught.latest && base ? changedFields(base, caught.latest) : [],
-        })
-        if (caught.latest) setBase(caught.latest)
+        showConflict(caught)
         return
       }
 
@@ -163,7 +184,7 @@ export function CredentialForm({
     <form className="space-y-5" onSubmit={handleSubmit} noValidate>
       <Field
         id="account-name"
-        label="Account label"
+        label={FIELD_LABELS.accountName}
         value={draft.accountName}
         placeholder="University email"
         error={errors.accountName}
@@ -171,7 +192,7 @@ export function CredentialForm({
       />
       <Field
         id="site-or-app"
-        label="Website or app"
+        label={FIELD_LABELS.siteOrApp}
         value={draft.siteOrApp}
         placeholder="mail.example.edu"
         error={errors.siteOrApp}
@@ -179,7 +200,7 @@ export function CredentialForm({
       />
       <Field
         id="credential-username"
-        label="Username"
+        label={FIELD_LABELS.username}
         value={draft.username}
         placeholder="student@example.edu"
         error={errors.username}
@@ -188,7 +209,7 @@ export function CredentialForm({
       />
 
       <div className="space-y-2">
-        <Label htmlFor="credential-password">Password</Label>
+        <Label htmlFor="credential-password">{FIELD_LABELS.password}</Label>
         <div className="flex gap-2">
           <Input
             id="credential-password"
@@ -267,7 +288,9 @@ export function CredentialForm({
       </Collapsible>
 
       <div className="space-y-2">
-        <Label htmlFor="credential-notes">Notes (optional)</Label>
+        <Label htmlFor="credential-notes">
+          {FIELD_LABELS.notes} (optional)
+        </Label>
         <textarea
           id="credential-notes"
           className="min-h-20 w-full resize-y rounded-md border border-input bg-input/20 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 dark:bg-input/30"
@@ -279,7 +302,9 @@ export function CredentialForm({
 
       {credential ? (
         <div className="space-y-2">
-          <Label htmlFor="credential-risk-level">Risk level</Label>
+          <Label htmlFor="credential-risk-level">
+            {FIELD_LABELS.riskLevel}
+          </Label>
           <select
             id="credential-risk-level"
             className="h-10 w-full rounded-md border border-input bg-input/20 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 dark:bg-input/30"
@@ -303,33 +328,44 @@ export function CredentialForm({
           className="space-y-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm"
           role="alert"
         >
+          <p className="font-medium">{conflict.message}</p>
           {conflict.latest ? (
             <>
-              <p className="font-medium">
-                This credential was changed on another device while you were
-                editing.
-              </p>
               <p className="text-muted-foreground">
-                {conflict.changed.length
-                  ? `Changed: ${conflict.changed.join(", ")}. `
+                {conflict.updated.length
+                  ? `The form now includes the other device's change to ${describeFields(conflict.updated)}. `
                   : null}
-                Load the latest version to review it, or save again to replace
-                it with your changes.
+                {conflict.bothChanged.length
+                  ? `You both changed ${describeFields(conflict.bothChanged)}, so your version is shown. `
+                  : null}
+                Review the details, then save again.
+              </p>
+              {conflict.bothChanged.length ? (
+                <Button
+                  className="h-9 px-3 text-sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => loadLatest(conflict.latest)}
+                >
+                  Load latest version
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <p className="text-muted-foreground">
+                Save it as a new credential to keep your details.
               </p>
               <Button
                 className="h-9 px-3 text-sm"
                 type="button"
                 variant="outline"
-                onClick={() => loadLatest(conflict.latest!)}
+                disabled={busy}
+                onClick={() => void saveAsNew()}
               >
-                Load latest version
+                Save as new credential
               </Button>
             </>
-          ) : (
-            <p className="font-medium">
-              This credential was deleted on another device while you were
-              editing.
-            </p>
           )}
         </div>
       ) : null}

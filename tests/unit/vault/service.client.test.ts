@@ -9,6 +9,7 @@ import { VaultConflictError } from "../../../lib/vault/remote"
 import {
   CredentialConflictError,
   VaultAlreadyExistsError,
+  VaultBusyError,
   VaultService,
 } from "../../../lib/vault/service.client"
 import {
@@ -502,6 +503,41 @@ describe("VaultService", () => {
       )
       expect(updated.password).toBe(validDraft.password)
       expect(service.listCredentials()).toEqual([updated])
+    })
+
+    it("retries while other devices keep saving, then asks to try again", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      const unrelated = await createEnvelope([
+        otherCredential,
+        migratedCredential,
+      ])
+      const save = repository.save.bind(repository)
+      let rejections = 3
+      repository.save = async (envelope) => {
+        if (rejections-- > 0) {
+          repository.saveCalls += 1
+          repository.envelope = unrelated
+          throw new VaultConflictError()
+        }
+        await save(envelope)
+      }
+
+      await expect(
+        service.updateCredential(
+          migratedCredential.id,
+          staleEdit,
+          migratedCredential.updatedAt
+        )
+      ).rejects.toBeInstanceOf(VaultBusyError)
+      expect(repository.saveCalls).toBe(3)
+
+      // With the other devices finished, the same edit saves.
+      const updated = await service.updateCredential(
+        migratedCredential.id,
+        staleEdit,
+        migratedCredential.updatedAt
+      )
+      expect(updated.notes).toBe("edited on this device")
     })
   })
 })

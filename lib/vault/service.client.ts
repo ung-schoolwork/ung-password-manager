@@ -49,6 +49,18 @@ export class CredentialConflictError extends Error {
   }
 }
 
+export class VaultBusyError extends Error {
+  constructor() {
+    super(
+      "Your vault is changing on another device. Wait a moment, then save again."
+    )
+    this.name = "VaultBusyError"
+  }
+}
+
+// Saves attempted against newer vaults before giving up.
+const UPDATE_ATTEMPTS = 3
+
 interface VaultServiceDependencies {
   now: () => Date
   createId: () => string
@@ -178,35 +190,43 @@ export class VaultService {
   }
 
   /**
-   * Applies an edit. Pass `basedOn`, the `updatedAt` of the copy the edit
-   * started from, so a newer change saved meanwhile is reported instead of
-   * overwritten.
+   * Applies an edit. Pass `expectedUpdatedAt`, the `updatedAt` of the copy the
+   * edit started from, so a newer change saved meanwhile is reported instead
+   * of overwritten.
    */
   async updateCredential(
     id: string,
     patch: Partial<CredentialDraft>,
-    basedOn?: string
+    expectedUpdatedAt?: string
   ): Promise<Credential> {
-    try {
-      return await this.applyUpdate(id, patch, basedOn)
-    } catch (error) {
-      if (basedOn === undefined || !(error instanceof VaultConflictError))
-        throw error
-      // Another device saved first. Load its vault, then save again only if
-      // this credential is still the version the edit started from.
-      await this.refresh()
-      return this.applyUpdate(id, patch, basedOn)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.applyUpdate(id, patch, expectedUpdatedAt)
+      } catch (error) {
+        if (
+          expectedUpdatedAt === undefined ||
+          !(error instanceof VaultConflictError)
+        )
+          throw error
+        if (attempt === UPDATE_ATTEMPTS) throw new VaultBusyError()
+        // Another device saved first. Load its vault, then save again only if
+        // this credential is still the version the edit started from.
+        await this.refresh()
+      }
     }
   }
 
   private async applyUpdate(
     id: string,
     patch: Partial<CredentialDraft>,
-    basedOn: string | undefined
+    expectedUpdatedAt: string | undefined
   ): Promise<Credential> {
     const { data } = this.requireUnlocked()
     const existing = data.credentials.find((credential) => credential.id === id)
-    if (basedOn !== undefined && existing?.updatedAt !== basedOn)
+    if (
+      expectedUpdatedAt !== undefined &&
+      existing?.updatedAt !== expectedUpdatedAt
+    )
       throw new CredentialConflictError(existing ? { ...existing } : null)
     if (!existing) throw new Error("Credential not found.")
 

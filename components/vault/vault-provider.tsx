@@ -48,11 +48,10 @@ interface VaultContextValue {
   unlockVault(passphrase: string): Promise<void>
   lockVault(): void
   addCredential(draft: CredentialDraft): Promise<Credential>
-  /** `basedOn` is the `updatedAt` of the copy being edited; see VaultService. */
   updateCredential(
     id: string,
     patch: Partial<CredentialDraft>,
-    basedOn?: string
+    expectedUpdatedAt?: string
   ): Promise<Credential>
   removeCredential(id: string): Promise<void>
 }
@@ -314,11 +313,19 @@ function ApprovedVaultProvider({
   )
 
   const updateCredential = useCallback(
-    async (id: string, patch: Partial<CredentialDraft>, basedOn?: string) => {
+    async (
+      id: string,
+      patch: Partial<CredentialDraft>,
+      expectedUpdatedAt?: string
+    ) => {
       const service = requireService()
       setBusy(true)
       try {
-        const credential = await service.updateCredential(id, patch, basedOn)
+        const credential = await service.updateCredential(
+          id,
+          patch,
+          expectedUpdatedAt
+        )
         refreshCredentials(service)
         return credential
       } catch (error) {

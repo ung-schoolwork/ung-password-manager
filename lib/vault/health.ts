@@ -79,111 +79,113 @@ export function analyzeCredentialsHealth(
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - DAYS_OVERDUE)
 
-  return credentials
-    .map((cred) => {
-      const warnings: PasswordWarning[] = []
-      const pwd = cred.password
-      const lowerPwd = pwd.toLowerCase() // used for the blocklist check
+  return (
+    credentials
+      .map((cred) => {
+        const warnings: PasswordWarning[] = []
+        const pwd = cred.password
+        const lowerPwd = pwd.toLowerCase() // used for the blocklist check
 
-      // --- Check 1: length --------------------------------------------------
-      // `else if` makes these mutually exclusive: a 5-char password gets
-      // "Weak" only, never both "Weak" and "Short".
-      if (pwd.length < MIN_LENGTH) {
-        warnings.push({
-          type: "Weak",
-          explanation: `This password has fewer than ${MIN_LENGTH} characters and may be easy to guess.`,
-        })
-      } else if (pwd.length < RECOMMENDED_LENGTH) {
-        warnings.push({
-          type: "Short",
-          explanation: `This password has fewer than ${RECOMMENDED_LENGTH} characters. Longer passwords are harder to guess.`,
-        })
-      }
+        // --- Check 1: length --------------------------------------------------
+        // `else if` makes these mutually exclusive: a 5-char password gets
+        // "Weak" only, never both "Weak" and "Short".
+        if (pwd.length < MIN_LENGTH) {
+          warnings.push({
+            type: "Weak",
+            explanation: `This password has fewer than ${MIN_LENGTH} characters and may be easy to guess.`,
+          })
+        } else if (pwd.length < RECOMMENDED_LENGTH) {
+          warnings.push({
+            type: "Short",
+            explanation: `This password has fewer than ${RECOMMENDED_LENGTH} characters. Longer passwords are harder to guess.`,
+          })
+        }
 
-      // --- Check 2: common password ----------------------------------------
-      // A separate `if`, so "password" triggers this AND the length warning.
-      // NOTE: this is why one root cause can produce several "Weak" boxes.
-      if (COMMON_PASSWORDS.includes(lowerPwd)) {
-        warnings.push({
-          type: "Weak",
-          explanation: "This matches a commonly used password.",
-        })
-      }
+        // --- Check 2: common password ----------------------------------------
+        // A separate `if`, so "password" triggers this AND the length warning.
+        // NOTE: this is why one root cause can produce several "Weak" boxes.
+        if (COMMON_PASSWORDS.includes(lowerPwd)) {
+          warnings.push({
+            type: "Weak",
+            explanation: "This matches a commonly used password.",
+          })
+        }
 
-      // --- Check 3: simple word+number pattern ------------------------------
-      // Flags letters-then-digits ("dragon99") or digits-then-letters
-      // ("123abc"). Regex breakdown:
-      //   ^ ... $   must match the whole string
-      //   [a-z]+    one or more letters (the `i` flag ignores case)
-      //   [0-9]+    one or more digits
-      // The length guard means a long passphrase like
-      // "correcthorsebatterystaple1" is not penalized.
-      const isSimplePattern =
-        pwd.length < RECOMMENDED_LENGTH &&
-        (/^[a-z]+[0-9]+$/i.test(pwd) || /^[0-9]+[a-z]+$/i.test(pwd))
+        // --- Check 3: simple word+number pattern ------------------------------
+        // Flags letters-then-digits ("dragon99") or digits-then-letters
+        // ("123abc"). Regex breakdown:
+        //   ^ ... $   must match the whole string
+        //   [a-z]+    one or more letters (the `i` flag ignores case)
+        //   [0-9]+    one or more digits
+        // The length guard means a long passphrase like
+        // "correcthorsebatterystaple1" is not penalized.
+        const isSimplePattern =
+          pwd.length < RECOMMENDED_LENGTH &&
+          (/^[a-z]+[0-9]+$/i.test(pwd) || /^[0-9]+[a-z]+$/i.test(pwd))
 
-      if (isSimplePattern) {
-        warnings.push({
-          type: "Weak",
-          explanation:
-            "Follows an easily guessed predictable word-and-number combination.",
-        })
-      }
+        if (isSimplePattern) {
+          warnings.push({
+            type: "Weak",
+            explanation:
+              "Follows an easily guessed predictable word-and-number combination.",
+          })
+        }
 
-      // --- Check 4: reuse ---------------------------------------------------
-      // Look up everyone sharing this password, then remove this credential
-      // itself. If anyone is left, the password is reused.
-      const otherAccounts = (passwordGroups.get(pwd) ?? []).filter(
-        (other) => other.id !== cred.id
-      )
+        // --- Check 4: reuse ---------------------------------------------------
+        // Look up everyone sharing this password, then remove this credential
+        // itself. If anyone is left, the password is reused.
+        const otherAccounts = (passwordGroups.get(pwd) ?? []).filter(
+          (other) => other.id !== cred.id
+        )
 
-      if (otherAccounts.length > 0) {
-        warnings.push({
-          type: "Reused",
-          // Lists only names/sites, never the password itself.
-          explanation: `This password is also saved for: ${otherAccounts
-            .map((other) => `${other.accountName} (${other.siteOrApp})`)
-            .join(", ")}. Reusing a password puts multiple accounts at risk.`,
-        })
-      }
+        if (otherAccounts.length > 0) {
+          warnings.push({
+            type: "Reused",
+            // Lists only names/sites, never the password itself.
+            explanation: `This password is also saved for: ${otherAccounts
+              .map((other) => `${other.accountName} (${other.siteOrApp})`)
+              .join(", ")}. Reusing a password puts multiple accounts at risk.`,
+          })
+        }
 
-      // --- Check 5: age -----------------------------------------------------
-      // Fallback chain: when the password last changed, else when the record
-      // was last edited, else when it was created. Date objects compare with
-      // `<` because they coerce to timestamps.
-      // NOTE: if all three fields are missing/malformed, this is an Invalid
-      // Date, and `Invalid Date < ninetyDaysAgo` is false, so the check
-      // silently passes.
-      const lastUpdated = new Date(
-        cred.passwordUpdatedAt || cred.updatedAt || cred.createdAt
-      )
-      if (lastUpdated < ninetyDaysAgo) {
-        warnings.push({
-          type: "Overdue",
-          explanation: `This password has not changed in over ${DAYS_OVERDUE} days. Review whether it needs updating.`,
-        })
-      }
+        // --- Check 5: age -----------------------------------------------------
+        // Fallback chain: when the password last changed, else when the record
+        // was last edited, else when it was created. Date objects compare with
+        // `<` because they coerce to timestamps.
+        // NOTE: if all three fields are missing/malformed, this is an Invalid
+        // Date, and `Invalid Date < ninetyDaysAgo` is false, so the check
+        // silently passes.
+        const lastUpdated = new Date(
+          cred.passwordUpdatedAt || cred.updatedAt || cred.createdAt
+        )
+        if (lastUpdated < ninetyDaysAgo) {
+          warnings.push({
+            type: "Overdue",
+            explanation: `This password has not changed in over ${DAYS_OVERDUE} days. Review whether it needs updating.`,
+          })
+        }
 
-      // --- Result -----------------------------------------------------------
-      // Spread the original credential (no mutation), normalize a missing
-      // risk level to "low", and attach the warnings.
-      return {
-        ...cred,
-        riskLevel: cred.riskLevel || "low",
-        warnings,
-      }
-    })
-    // --- Sorting (descending, hence b - a) ------------------------------------
-    // 1. Higher risk first (high -> medium -> low).
-    // 2. Tiebreaker: more warnings first.
-    // So a high-risk account with 1 warning outranks a low-risk one with 4.
-    .sort((a, b) => {
-      // NOTE: the `|| 1` fallbacks are redundant, since riskLevel was already
-      // defaulted to "low" above. Harmless noise.
-      const riskDiff =
-        (RISK_PRIORITY[b.riskLevel || "low"] || 1) -
-        (RISK_PRIORITY[a.riskLevel || "low"] || 1)
-      if (riskDiff !== 0) return riskDiff
-      return b.warnings.length - a.warnings.length
-    })
+        // --- Result -----------------------------------------------------------
+        // Spread the original credential (no mutation), normalize a missing
+        // risk level to "low", and attach the warnings.
+        return {
+          ...cred,
+          riskLevel: cred.riskLevel || "low",
+          warnings,
+        }
+      })
+      // --- Sorting (descending, hence b - a) ------------------------------------
+      // 1. Higher risk first (high -> medium -> low).
+      // 2. Tiebreaker: more warnings first.
+      // So a high-risk account with 1 warning outranks a low-risk one with 4.
+      .sort((a, b) => {
+        // NOTE: the `|| 1` fallbacks are redundant, since riskLevel was already
+        // defaulted to "low" above. Harmless noise.
+        const riskDiff =
+          (RISK_PRIORITY[b.riskLevel || "low"] || 1) -
+          (RISK_PRIORITY[a.riskLevel || "low"] || 1)
+        if (riskDiff !== 0) return riskDiff
+        return b.warnings.length - a.warnings.length
+      })
+  )
 }

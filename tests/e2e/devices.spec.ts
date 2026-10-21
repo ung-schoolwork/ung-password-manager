@@ -216,16 +216,16 @@ test("saving an edit after another device changed the credential reports a confl
     .getByRole("alert")
     .filter({ hasText: "changed on another device" })
   await expect(notice).toBeVisible()
-  await expect(notice).toContainText("Changed: password.")
-
-  await notice.getByRole("button", { name: "Load latest version" }).click()
+  await expect(notice).toContainText(
+    "The form now includes the other device's change to the password."
+  )
+  // The other device's password is filled in and this device's notes are kept.
   await expect(staleDialog.getByLabel("Password", { exact: true })).toHaveValue(
     "changed-on-first-device-456"
   )
-  await expect(staleDialog.getByLabel("Notes (optional)")).toHaveValue("")
-  await staleDialog
-    .getByLabel("Notes (optional)")
-    .fill("Edited on the second device")
+  await expect(staleDialog.getByLabel("Notes (optional)")).toHaveValue(
+    "Edited on the second device"
+  )
   await staleDialog.getByRole("button", { name: "Save changes" }).click()
   await expect(staleDialog).toHaveCount(0)
 
