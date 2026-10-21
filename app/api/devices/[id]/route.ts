@@ -24,6 +24,8 @@ export async function DELETE(
     const result = await removeDevice(user.id, current.id, id)
     if (result === "current")
       return json({ error: "Use another device to remove this one" }, 400)
+    if (result === "not-approved")
+      return json({ error: "Device not approved" }, 403)
     if (result === "busy") return json({ error: "Try again in a moment" }, 409)
     if (result === "not-found") return json({ error: "Device not found" }, 404)
     return json({ ok: true })

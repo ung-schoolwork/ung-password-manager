@@ -22,6 +22,10 @@ const origin = "http://127.0.0.1:3100"
 const prefix = `devices-${randomUUID()}`
 const password = "correct-password-123"
 const sources: string[] = []
+const accountKeys: string[] = []
+// Sign-ins this file adds to the shared global limit, undone afterwards so
+// repeated runs do not exhaust it.
+let globalAttempts = 0
 const originalHeader = process.env.AUTH_TRUSTED_IP_HEADER
 
 function freshSource() {
@@ -30,6 +34,8 @@ function freshSource() {
   return ip
 }
 function authRequest(email: string, ip: string) {
+  globalAttempts += 1
+  accountKeys.push(digest(`account:${ip}:${email}`))
   return new Request(`${origin}/api/auth`, {
     method: "POST",
     headers: {
@@ -116,6 +122,20 @@ async function approvedCount(email: string) {
     .collection("accountdevices")
     .countDocuments({ ownerId: await ownerId(email), approved: true })
 }
+async function lockOf(email: string) {
+  return mongoose.connection
+    .collection<{ _id: string; holder: string; expiresAt: Date }>(
+      "accountdeviceremovallocks"
+    )
+    .findOne({ _id: await ownerId(email) })
+}
+async function setLock(email: string, holder: string, expiresAt: Date) {
+  await mongoose.connection
+    .collection<{ _id: string; holder: string; expiresAt: Date }>(
+      "accountdeviceremovallocks"
+    )
+    .insertOne({ _id: await ownerId(email), holder, expiresAt })
+}
 // Signs in a second browser, then approves it as an approved device would.
 async function approvedSecondDevice(email: string) {
   const cookies = await signIn(email)
@@ -145,13 +165,23 @@ after(async () => {
   await mongoose.connection
     .collection("accountdevices")
     .deleteMany({ ownerId: { $in: ids } })
-  await mongoose.connection
-    .collection("accountdeviceremovallocks")
-    .deleteMany({ _id: { $in: ids } } as never)
+  for (const name of [
+    "accountdeviceremovallocks",
+    "accountfirstdeviceapprovals",
+  ])
+    await mongoose.connection
+      .collection(name)
+      .deleteMany({ _id: { $in: ids } } as never)
   await User.deleteMany({ email: { $regex: `^${prefix}` } })
   await Attempt.deleteMany({
-    key: { $in: sources.map((ip) => digest(`source:${ip}`)) },
+    key: {
+      $in: [...sources.map((ip) => digest(`source:${ip}`)), ...accountKeys],
+    },
   })
+  await Attempt.updateOne(
+    { key: digest("global"), count: { $gte: globalAttempts } },
+    { $inc: { count: -globalAttempts } }
+  )
   await mongoose.disconnect()
   if (originalHeader === undefined) delete process.env.AUTH_TRUSTED_IP_HEADER
   else process.env.AUTH_TRUSTED_IP_HEADER = originalHeader
@@ -163,13 +193,20 @@ describe("removing a device", () => {
     const state = await deviceState(cookies)
     assert.equal(state.approved, true)
     const id = state.deviceId
+    // Next.js decodes route params, so padding arrives as plain spaces.
     for (const attempt of [
       id,
       id.toUpperCase(),
       `${id.slice(0, 12).toUpperCase()}${id.slice(12)}`,
-      encodeURIComponent(` ${id.toUpperCase()} `),
+      ` ${id.toUpperCase()} `,
     ]) {
-      assert.equal((await del(attempt, cookies)).status, 400, attempt)
+      const response = await del(attempt, cookies)
+      assert.equal(response.status, 400, attempt)
+      assert.deepEqual(
+        await response.json(),
+        { error: "Use another device to remove this one" },
+        attempt
+      )
     }
     // Still the only approved device, so the next browser must wait for approval.
     assert.equal((await listed(cookies)).length, 1)
@@ -244,8 +281,56 @@ describe("removing a device", () => {
     const firstId = (await deviceState(cookies)).deviceId
 
     assert.equal(await removeDevice(owner, firstId, second.id), "removed")
-    assert.equal(await removeDevice(owner, second.id, firstId), "not-found")
+    assert.equal(await removeDevice(owner, second.id, firstId), "not-approved")
+    // Through the API, the removed device is told it is no longer approved.
+    assert.equal((await del(firstId, second.cookies)).status, 403)
     assert.equal(await removeDevice(owner, firstId, firstId), "current")
     assert.equal(await approvedCount(email), 1)
+  })
+
+  it("never trusts the next browser automatically once all devices are gone", async () => {
+    const { email } = await newAccount("emptied")
+    // However the approved devices disappear, the account stays protected.
+    await mongoose.connection
+      .collection("accountdevices")
+      .deleteMany({ ownerId: await ownerId(email) })
+    assert.equal(await approvedCount(email), 0)
+    assert.equal((await deviceState(await signIn(email))).approved, false)
+    assert.equal(await approvedCount(email), 0)
+  })
+
+  it("protects accounts whose first device was approved before this record existed", async () => {
+    const { email } = await newAccount("legacy")
+    const owner = await ownerId(email)
+    await mongoose.connection
+      .collection("accountfirstdeviceapprovals")
+      .deleteOne({ _id: owner } as never)
+    // A new browser signs in while the first device is still approved.
+    assert.equal((await deviceState(await signIn(email))).approved, false)
+    // Even after the first device is gone, the next browser must wait.
+    await mongoose.connection
+      .collection("accountdevices")
+      .deleteMany({ ownerId: owner })
+    assert.equal((await deviceState(await signIn(email))).approved, false)
+  })
+
+  it("takes over an expired lock and waits for a live one", async () => {
+    const { email, cookies } = await newAccount("locks")
+    const second = await approvedSecondDevice(email)
+    await approvedSecondDevice(email)
+
+    await setLock(email, "live-holder", new Date(Date.now() + 60_000))
+    assert.equal((await del(second.id, cookies)).status, 409)
+    assert.equal(await approvedCount(email), 3)
+    // The busy request leaves the other holder's lock in place.
+    assert.equal((await lockOf(email))?.holder, "live-holder")
+
+    await mongoose.connection
+      .collection("accountdeviceremovallocks")
+      .deleteOne({ _id: await ownerId(email) } as never)
+    await setLock(email, "crashed-holder", new Date(Date.now() - 1_000))
+    assert.equal((await del(second.id, cookies)).status, 200)
+    assert.equal(await approvedCount(email), 2)
+    assert.equal(await lockOf(email), null)
   })
 })
