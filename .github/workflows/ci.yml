@@ -19,6 +19,7 @@ jobs:
     env:
       MONGODB_URI: mongodb://127.0.0.1:27018/ung_auth_test
       APP_ORIGIN: http://127.0.0.1:3100
+      SHARE_ENCRYPTION_KEY: ABMCUgIBsECa4muc0zxrifhbXpe9eJRdS4Q1Ex0PtlY=
     services:
       mongodb:
         image: mongo:8
