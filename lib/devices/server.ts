@@ -7,6 +7,7 @@ import {
   deviceNameFromUserAgent,
   type DeviceState,
   type DeviceSummary,
+  normalizeDeviceId,
 } from "@/lib/devices/shared"
 
 export const DEVICE_COOKIE =
@@ -41,11 +42,30 @@ const Device =
   (mongoose.models.AccountDevice as mongoose.Model<StoredDevice> | undefined) ||
   mongoose.model<StoredDevice>("AccountDevice", schema)
 
+// One short-lived lock per account serializes removals, so two devices cannot
+// remove each other at the same moment and leave no approved device behind.
+interface StoredRemovalLock {
+  _id: string
+  expiresAt: Date
+}
+const lockSchema = new Schema<StoredRemovalLock>({
+  _id: { type: String, required: true },
+  expiresAt: { type: Date, required: true, index: { expires: 0 } },
+})
+const RemovalLock =
+  (mongoose.models.AccountDeviceRemovalLock as
+    mongoose.Model<StoredRemovalLock> | undefined) ||
+  mongoose.model<StoredRemovalLock>("AccountDeviceRemovalLock", lockSchema)
+const LOCK_LIFETIME_MS = 10 * 1000
+
 let indexesReady: Promise<void> | undefined
 async function connectDevices() {
   if (mongoose.connection.readyState === 0) indexesReady = undefined
   await connectAuth()
-  indexesReady ??= Device.createIndexes()
+  indexesReady ??= Promise.all([
+    Device.createIndexes(),
+    RemovalLock.createIndexes(),
+  ])
     .then(() => undefined)
     .catch((error) => {
       indexesReady = undefined
@@ -209,11 +229,49 @@ export async function approvePendingDevice(ownerId: string, code: string) {
   return device ? { id: String(device._id), name: device.name } : null
 }
 
-export async function removeDevice(ownerId: string, id: string) {
+export type RemoveDeviceResult = "removed" | "not-found" | "current" | "busy"
+
+async function acquireRemovalLock(ownerId: string) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await RemovalLock.create({
+        _id: ownerId,
+        expiresAt: new Date(Date.now() + LOCK_LIFETIME_MS),
+      })
+      return true
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+  return false
+}
+
+// Removes one of the account's devices on behalf of an approved device. The
+// requesting device can never remove itself, so an approved device always remains.
+export async function removeDevice(
+  ownerId: string,
+  currentId: string,
+  id: string
+): Promise<RemoveDeviceResult> {
+  const target = normalizeDeviceId(id)
+  const current = normalizeDeviceId(currentId)
+  if (!target || !current) return "not-found"
+  if (target === current) return "current"
   await connectDevices()
-  if (!mongoose.isValidObjectId(id)) return false
-  const result = await Device.deleteOne({ _id: id, ownerId })
-  return result.deletedCount === 1
+  if (!(await acquireRemovalLock(ownerId))) return "busy"
+  try {
+    const stillApproved = await Device.exists({
+      _id: current,
+      ownerId,
+      approved: true,
+    })
+    if (!stillApproved) return "not-found"
+    const result = await Device.deleteOne({ _id: target, ownerId })
+    return result.deletedCount === 1 ? "removed" : "not-found"
+  } finally {
+    await RemovalLock.deleteOne({ _id: ownerId })
+  }
 }
 
 export async function readSmallJson(request: Request): Promise<unknown> {
