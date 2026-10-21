@@ -15,6 +15,9 @@ export const DEVICE_COOKIE =
 const DEVICE_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CODE_LIFETIME_MS = 10 * 60 * 1000
 const LAST_SEEN_GRANULARITY_MS = 60 * 1000
+// How many accounts one browser remembers. Adding one more drops the token of
+// the account that was added to this browser longest ago.
+const MAX_DEVICE_TOKENS = 8
 
 interface StoredDevice {
   ownerId: string
@@ -95,18 +98,25 @@ async function connectDevices() {
   await indexesReady
 }
 
-function readDeviceToken(request: Request) {
+// The device cookie holds one server-issued token per account that has signed
+// in on this browser, so each account keeps its own approval. A token is only
+// ever looked up together with its account, so a token planted in the cookie
+// or issued to another account never approves this one.
+function readDeviceTokens(request: Request): string[] {
   const raw = request.headers
     .get("cookie")
     ?.split(";")
     .map((part) => part.trim())
     .find((part) => part.startsWith(`${DEVICE_COOKIE}=`))
     ?.slice(DEVICE_COOKIE.length + 1)
-  return raw && /^[a-f0-9]{64}$/.test(raw) ? raw : null
+  const tokens = (raw ?? "")
+    .split(".")
+    .filter((token) => /^[a-f0-9]{64}$/.test(token))
+  return [...new Set(tokens)].slice(0, MAX_DEVICE_TOKENS)
 }
 
-export function setDeviceCookie(response: NextResponse, token: string) {
-  response.cookies.set(DEVICE_COOKIE, token, {
+export function setDeviceCookie(response: NextResponse, value: string) {
+  response.cookies.set(DEVICE_COOKIE, value, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
@@ -158,12 +168,15 @@ function stateOf(device: {
 export async function ensureDevice(
   request: Request,
   ownerId: string
-): Promise<{ state: DeviceState; newToken: string | null }> {
+): Promise<{ state: DeviceState; deviceCookie: string | null }> {
   await connectDevices()
   const now = new Date()
-  const token = readDeviceToken(request)
-  const existing = token
-    ? await Device.findOne({ tokenDigest: digest(token), ownerId })
+  const tokens = readDeviceTokens(request)
+  const existing = tokens.length
+    ? await Device.findOne({
+        tokenDigest: { $in: tokens.map(digest) },
+        ownerId,
+      })
     : null
 
   if (existing) {
@@ -175,10 +188,11 @@ export async function ensureDevice(
       existing.pendingExpiresAt = new Date(now.getTime() + CODE_LIFETIME_MS)
       await existing.save()
     }
-    return { state: stateOf(existing), newToken: null }
+    return { state: stateOf(existing), deviceCookie: null }
   }
 
   const newToken = randomBytes(32).toString("hex")
+  const deviceCookie = await nextDeviceCookie(newToken, tokens)
   const name = deviceNameFromUserAgent(request.headers.get("user-agent"))
   const hasApproved = await Device.exists({ ownerId, approved: true })
   // Claim even when a device is already approved, so accounts created before
@@ -193,7 +207,7 @@ export async function ensureDevice(
       approvedAt: now,
       lastSeenAt: now,
     })
-    return { state: stateOf(device), newToken }
+    return { state: stateOf(device), deviceCookie }
   }
   const device = await Device.create({
     ownerId,
@@ -204,7 +218,22 @@ export async function ensureDevice(
     pendingExpiresAt: new Date(now.getTime() + CODE_LIFETIME_MS),
     lastSeenAt: now,
   })
-  return { state: stateOf(device), newToken }
+  return { state: stateOf(device), deviceCookie }
+}
+
+// Puts the new token first and keeps the other accounts' tokens that still
+// belong to a device, dropping removed ones so they do not take up room.
+async function nextDeviceCookie(newToken: string, tokens: string[]) {
+  const kept = tokens.length
+    ? new Set(
+        await Device.distinct("tokenDigest", {
+          tokenDigest: { $in: tokens.map(digest) },
+        })
+      )
+    : new Set<string>()
+  return [newToken, ...tokens.filter((token) => kept.has(digest(token)))]
+    .slice(0, MAX_DEVICE_TOKENS)
+    .join(".")
 }
 
 async function claimFirstApproval(ownerId: string, now: Date) {
@@ -223,12 +252,12 @@ async function claimFirstApproval(ownerId: string, now: Date) {
 }
 
 export async function currentApprovedDevice(request: Request, ownerId: string) {
-  const token = readDeviceToken(request)
-  if (!token) return null
+  const tokens = readDeviceTokens(request)
+  if (!tokens.length) return null
   await connectDevices()
   const now = new Date()
   const device = await Device.findOne({
-    tokenDigest: digest(token),
+    tokenDigest: { $in: tokens.map(digest) },
     ownerId,
     approved: true,
   }).lean()
