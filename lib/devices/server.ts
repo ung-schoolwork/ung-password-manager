@@ -29,7 +29,7 @@ interface StoredDevice {
 
 const schema = new Schema<StoredDevice>({
   ownerId: { type: String, required: true, index: true },
-  tokenDigest: { type: String, required: true, unique: true },
+  tokenDigest: { type: String, required: true },
   name: { type: String, required: true },
   approved: { type: Boolean, required: true },
   code: { type: String },
@@ -37,6 +37,9 @@ const schema = new Schema<StoredDevice>({
   approvedAt: { type: Date },
   lastSeenAt: { type: Date, required: true },
 })
+// A browser keeps one device token, and each account that signs in on it gets
+// its own device record, so one account's approval never replaces another's.
+schema.index({ tokenDigest: 1, ownerId: 1 }, { unique: true })
 const Device =
   (mongoose.models.AccountDevice as mongoose.Model<StoredDevice> | undefined) ||
   mongoose.model<StoredDevice>("AccountDevice", schema)
@@ -45,7 +48,8 @@ let indexesReady: Promise<void> | undefined
 async function connectDevices() {
   if (mongoose.connection.readyState === 0) indexesReady = undefined
   await connectAuth()
-  indexesReady ??= Device.createIndexes()
+  // syncIndexes also drops the earlier unique index on tokenDigest alone.
+  indexesReady ??= Device.syncIndexes()
     .then(() => undefined)
     .catch((error) => {
       indexesReady = undefined
@@ -137,13 +141,16 @@ export async function ensureDevice(
     return { state: stateOf(existing), newToken: null }
   }
 
-  const newToken = randomBytes(32).toString("hex")
+  // Reuse this browser's token if it has one, so a token another account
+  // already relies on is never replaced.
+  const deviceToken = token ?? randomBytes(32).toString("hex")
+  const newToken = token ? null : deviceToken
   const name = deviceNameFromUserAgent(request.headers.get("user-agent"))
   const hasApproved = await Device.exists({ ownerId, approved: true })
   if (!hasApproved) {
     const device = await Device.create({
       ownerId,
-      tokenDigest: digest(newToken),
+      tokenDigest: digest(deviceToken),
       name,
       approved: true,
       approvedAt: now,
@@ -153,7 +160,7 @@ export async function ensureDevice(
   }
   const device = await Device.create({
     ownerId,
-    tokenDigest: digest(newToken),
+    tokenDigest: digest(deviceToken),
     name,
     approved: false,
     code: await freshCode(ownerId),
