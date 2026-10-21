@@ -333,4 +333,45 @@ describe("VaultService", () => {
     expect(service.isUnlocked()).toBe(false)
     expect(() => service.listCredentials()).toThrow("Unlock the vault")
   })
+  it("picks up credentials another device saved to the same vault", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+    expect(service.listCredentials()).toEqual([])
+
+    // Another approved device saves a credential to the shared vault.
+    repository.envelope = await createEnvelope([migratedCredential])
+    await service.refresh()
+
+    expect(service.listCredentials()).toEqual([migratedCredential])
+  })
+
+  it("keeps the vault unlocked when a refresh cannot reach the saved vault", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+    await service.saveCredential(validDraft)
+    repository.load = async () => {
+      throw new Error("offline")
+    }
+
+    await expect(service.refresh()).rejects.toThrow("offline")
+    expect(service.isUnlocked()).toBe(true)
+    expect(service.listCredentials()).toHaveLength(1)
+  })
+
+  it("rejects a save built on data that a refresh just replaced", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+    repository.envelope = await createEnvelope([migratedCredential])
+
+    const refreshing = service.refresh()
+    const saving = service.saveCredential(validDraft)
+    await refreshing
+
+    await expect(saving).rejects.toThrow("Your vault changed")
+    expect(service.listCredentials()).toEqual([migratedCredential])
+    expect(repository.saveCalls).toBe(1)
+  })
 })

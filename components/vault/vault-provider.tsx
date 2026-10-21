@@ -10,7 +10,14 @@ import {
   type ReactNode,
 } from "react"
 
-import { RemoteVaultRepository } from "@/lib/vault/remote.client"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+
+import { registerThisDevice } from "@/lib/devices/client"
+import { DeviceNotApprovedError } from "@/lib/devices/shared"
+import {
+  fetchVaultRevision,
+  RemoteVaultRepository,
+} from "@/lib/vault/remote.client"
 import {
   localVaultSources as findLocalVaultSources,
   readLocalVault,
@@ -19,13 +26,19 @@ import {
 import { VaultService } from "@/lib/vault/service.client"
 import type { Credential, CredentialDraft } from "@/lib/vault/types"
 
-type VaultStatus = "loading" | "needs-setup" | "locked" | "unlocked" | "error"
+type VaultStatus =
+  "loading" | "device-pending" | "needs-setup" | "locked" | "unlocked" | "error"
+
+export const VAULT_POLL_INTERVAL_MS = 15_000
+const DEVICE_POLL_INTERVAL_MS = 3_000
 
 interface VaultContextValue {
   status: VaultStatus
   credentials: Credential[]
   busy: boolean
   initializationError: string | null
+  /** The code to enter on an approved device while this device waits. */
+  deviceCode: string | null
   localVaultSources: LocalVaultSource[]
   migrateVault(source: LocalVaultSource, passphrase: string): Promise<void>
   createVault(passphrase: string): Promise<void>
@@ -41,12 +54,75 @@ interface VaultContextValue {
 
 const VaultContext = createContext<VaultContextValue | null>(null)
 
+const unavailable = async () => {
+  throw new Error("The vault is not available on this device yet.")
+}
+
+// Holds the vault back until this browser is an approved device on the account.
 export function VaultProvider({
   children,
   accountId,
 }: {
   children: ReactNode
   accountId: string
+}) {
+  const device = useQuery({
+    queryKey: ["device", accountId],
+    queryFn: registerThisDevice,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.approved === false ? DEVICE_POLL_INTERVAL_MS : false,
+    refetchOnWindowFocus: (query) => query.state.data?.approved === false,
+  })
+  const { refetch } = device
+
+  if (device.data?.approved) {
+    return (
+      <ApprovedVaultProvider
+        key={device.data.deviceId}
+        accountId={accountId}
+        onDeviceRemoved={() => void refetch()}
+      >
+        {children}
+      </ApprovedVaultProvider>
+    )
+  }
+
+  const pending = device.data && !device.data.approved ? device.data : null
+  const failed = device.isError && !device.data
+  return (
+    <VaultContext.Provider
+      value={{
+        status: pending ? "device-pending" : failed ? "error" : "loading",
+        credentials: [],
+        busy: false,
+        initializationError: failed
+          ? "This device could not be checked. Refresh the page and try again."
+          : null,
+        deviceCode: pending?.code ?? null,
+        localVaultSources: [],
+        migrateVault: unavailable,
+        createVault: unavailable,
+        unlockVault: unavailable,
+        lockVault: () => undefined,
+        addCredential: unavailable,
+        updateCredential: unavailable,
+        removeCredential: unavailable,
+      }}
+    >
+      {children}
+    </VaultContext.Provider>
+  )
+}
+
+function ApprovedVaultProvider({
+  children,
+  accountId,
+  onDeviceRemoved,
+}: {
+  children: ReactNode
+  accountId: string
+  onDeviceRemoved: () => void
 }) {
   const serviceRef = useRef<VaultService | null>(null)
   const [status, setStatus] = useState<VaultStatus>("loading")
@@ -95,6 +171,57 @@ export function VaultProvider({
       serviceRef.current = null
     }
   }, [accountId])
+
+  // Pick up changes made on other approved devices while the vault is open.
+  const revision = useQuery({
+    queryKey: ["vault-revision", accountId],
+    queryFn: fetchVaultRevision,
+    enabled: status === "unlocked",
+    retry: false,
+    refetchInterval: VAULT_POLL_INTERVAL_MS,
+  })
+  const queryClient = useQueryClient()
+  const { data: latestRevision, error: revisionError } = revision
+
+  useEffect(() => {
+    const service = serviceRef.current
+    if (status !== "unlocked" || !service) return
+    const removed = () => {
+      service.lockVault()
+      setCredentials([])
+      setStatus("locked")
+      queryClient.removeQueries({ queryKey: ["vault-revision", accountId] })
+      onDeviceRemoved()
+    }
+    if (revisionError instanceof DeviceNotApprovedError) {
+      removed()
+      return
+    }
+    if (
+      busy ||
+      latestRevision === undefined ||
+      latestRevision === service.knownRevision()
+    )
+      return
+    service
+      .refresh()
+      .then(() => {
+        if (serviceRef.current === service)
+          setCredentials(service.listCredentials())
+      })
+      .catch((caught) => {
+        if (caught instanceof DeviceNotApprovedError) removed()
+        // Other failures retry on the next check; the open vault stays usable.
+      })
+  }, [
+    status,
+    busy,
+    latestRevision,
+    revisionError,
+    accountId,
+    onDeviceRemoved,
+    queryClient,
+  ])
 
   const requireService = useCallback(() => {
     if (!serviceRef.current) throw new Error("The vault is still loading.")
@@ -217,6 +344,7 @@ export function VaultProvider({
         credentials,
         busy,
         initializationError,
+        deviceCode: null,
         localVaultSources,
         migrateVault,
         createVault,

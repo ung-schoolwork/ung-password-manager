@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { ensureDevice, setDeviceCookie } from "@/lib/devices/server"
 import {
   connectAuth,
   credentials,
@@ -28,7 +29,10 @@ export async function POST(request: Request) {
     const passwordHash = await hashPassword(input.password, salt)
     const user = await User.create({ email: input.email, passwordHash, salt })
     try {
-      return await issueSession(user, 201)
+      const response = await issueSession(user, 201)
+      const { newToken } = await ensureDevice(request, String(user._id))
+      if (newToken) setDeviceCookie(response, newToken)
+      return response
     } catch {
       // Avoid leaving an account that the caller believes failed to register.
       try {

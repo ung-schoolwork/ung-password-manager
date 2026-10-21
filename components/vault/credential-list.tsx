@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { KeyRound, Pencil, Plus, Share2, Upload } from "lucide-react"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -144,7 +145,13 @@ function CredentialRow({
       data-credential-id={credential.id}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <HealthShield status={status} size="sm" />
+        <Link
+          aria-label={`Password health for ${credential.accountName}`}
+          className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          href="/health"
+        >
+          <HealthShield status={status} size="sm" />
+        </Link>
 
         <dl className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">

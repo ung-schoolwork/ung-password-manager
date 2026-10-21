@@ -1,3 +1,4 @@
+import { ensureDevice, setDeviceCookie } from "@/lib/devices/server"
 import {
   connectAuth,
   credentials,
@@ -29,7 +30,10 @@ export async function POST(request: Request) {
       !user
     )
       return json({ error: "Invalid credentials" }, 401)
-    return await issueSession(user)
+    const response = await issueSession(user)
+    const { newToken } = await ensureDevice(request, String(user._id))
+    if (newToken) setDeviceCookie(response, newToken)
+    return response
   } catch (error) {
     if (error instanceof HashBusyError) return throttled(1)
     return failure()

@@ -1,7 +1,12 @@
 "use client"
 
 import { useState, type FormEvent } from "react"
-import { AlertTriangle, LockKeyhole, ShieldCheck } from "lucide-react"
+import {
+  AlertTriangle,
+  LockKeyhole,
+  MonitorSmartphone,
+  ShieldCheck,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -13,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useVault } from "@/components/vault/vault-provider"
+import { formatDeviceCode } from "@/lib/devices/shared"
 import { MASTER_PASSPHRASE_MIN_LENGTH } from "@/lib/vault/validation"
 
 export function VaultGate() {
@@ -20,6 +26,7 @@ export function VaultGate() {
     status,
     busy,
     initializationError,
+    deviceCode,
     createVault,
     localVaultSources,
     migrateVault,
@@ -40,6 +47,42 @@ export function VaultGate() {
           <ShieldCheck className="size-5 animate-pulse" aria-hidden="true" />
           Loading your encrypted vault…
         </div>
+      </main>
+    )
+  }
+
+  if (status === "device-pending") {
+    return (
+      <main className="grid min-h-svh place-items-center p-6">
+        <Card className="w-full max-w-lg">
+          <CardHeader className="gap-3">
+            <div className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <MonitorSmartphone className="size-5" aria-hidden="true" />
+            </div>
+            <h1 className="font-heading text-2xl font-medium">
+              Approve this device
+            </h1>
+            <CardDescription className="text-sm">
+              Open your account menu on a device you already use, choose “Add a
+              device”, and enter this code. A new code appears here
+              automatically if this one expires.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p
+              aria-label="Device approval code"
+              className="rounded-lg bg-muted px-4 py-5 text-center font-mono text-3xl font-semibold tracking-[0.3em]"
+            >
+              {deviceCode ? formatDeviceCode(deviceCode) : "…"}
+            </p>
+            <p
+              role="status"
+              className="text-center text-sm text-muted-foreground"
+            >
+              Waiting for approval…
+            </p>
+          </CardContent>
+        </Card>
       </main>
     )
   }

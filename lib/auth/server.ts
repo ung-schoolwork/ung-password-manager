@@ -73,7 +73,9 @@ export function failure() {
 }
 export function originAllowed(request: Request) {
   const origin = process.env.APP_ORIGIN
-  if (!origin) return false
+  // With no APP_ORIGIN, any origin may call the API outside production.
+  // Production still fails closed so a missing setting never opens it up.
+  if (!origin) return process.env.NODE_ENV !== "production"
   try {
     return (
       new URL(origin).origin === origin &&
@@ -198,7 +200,7 @@ export function sourceAddress(request: Request) {
   }
   return process.env.NODE_ENV === "production" ? null : "127.0.0.1"
 }
-async function increment(key: string, now: Date) {
+export async function increment(key: string, now: Date) {
   const expiresAt = new Date(now.getTime() + LIMIT_WINDOW_MS)
   const filter = { key: digest(key) }
   const current = await Attempt.findOneAndUpdate(

@@ -1,16 +1,21 @@
 "use client"
 
-import { useEffect, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { usePathname, useRouter } from "next/navigation"
 import { AccountProvider, useAccount } from "@/components/auth/account-provider"
+import { AccountMenu } from "@/components/auth/account-menu"
 import { Button } from "@/components/ui/button"
 import { VaultApp } from "@/components/vault/vault-app"
 
 export function AccountApp({ children }: { children: ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient())
   return (
-    <AccountProvider>
-      <AccountScreen>{children}</AccountScreen>
-    </AccountProvider>
+    <QueryClientProvider client={queryClient}>
+      <AccountProvider>
+        <AccountScreen>{children}</AccountScreen>
+      </AccountProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -48,12 +53,11 @@ function AccountScreen({ children }: { children: ReactNode }) {
   return (
     <div>
       <div className="flex items-center justify-end gap-3 border-b px-5 py-2 sm:px-8">
-        <span
-          className="truncate text-sm text-muted-foreground"
-          aria-label="Signed-in account"
-        >
-          {session.user.email}
-        </span>
+        <AccountMenu
+          key={session.user.id}
+          accountId={session.user.id}
+          email={session.user.email}
+        />
         <Button
           type="button"
           variant="outline"

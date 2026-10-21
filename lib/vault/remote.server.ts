@@ -64,3 +64,11 @@ export async function saveAccountVault(ownerId: string, write: VaultWrite) {
   }
   return { revision }
 }
+
+export async function loadAccountRevision(
+  ownerId: string
+): Promise<string | null> {
+  await connectVault()
+  const vault = await Vault.findOne({ ownerId }, { revision: 1 }).lean()
+  return vault?.revision ?? null
+}

@@ -1,3 +1,4 @@
+import { DeviceNotApprovedError } from "@/lib/devices/shared"
 import type { VaultRepository } from "@/lib/vault/repository.client"
 import type { VaultEnvelopeV1 } from "@/lib/vault/types"
 import {
@@ -7,14 +8,26 @@ import {
   VaultConflictError,
 } from "@/lib/vault/remote"
 
-async function vaultRequest(method: "GET" | "PUT", body?: string) {
+export async function fetchVaultRevision(): Promise<string | null> {
+  const value = await vaultRequest("GET", undefined, "/api/vault/revision")
+  if (value.revision === null) return null
+  if (!isVaultRevision(value.revision))
+    throw new Error("Your vault could not be checked for changes.")
+  return value.revision
+}
+
+async function vaultRequest(
+  method: "GET" | "PUT",
+  body?: string,
+  path = "/api/vault"
+) {
   const message =
     method === "GET"
       ? "Your vault could not be opened. Try again."
       : "Your vault could not be saved. Try again."
   let response: Response
   try {
-    response = await fetch("/api/vault", {
+    response = await fetch(path, {
       method,
       credentials: "same-origin",
       cache: "no-store",
@@ -24,6 +37,7 @@ async function vaultRequest(method: "GET" | "PUT", body?: string) {
   } catch {
     throw new Error(message)
   }
+  if (response.status === 403) throw new DeviceNotApprovedError()
   if (response.status === 409) throw new VaultConflictError()
   if (response.status === 401)
     throw new Error("Your account session has ended. Sign in again.")
@@ -37,6 +51,10 @@ async function vaultRequest(method: "GET" | "PUT", body?: string) {
 
 export class RemoteVaultRepository implements VaultRepository {
   private revision: string | null = null
+
+  currentRevision(): string | null {
+    return this.revision
+  }
 
   async load(): Promise<VaultEnvelopeV1 | null> {
     const value = await vaultRequest("GET")
