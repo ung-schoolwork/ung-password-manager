@@ -5,8 +5,11 @@ import {
   VaultUnlockError,
 } from "../../../lib/vault/crypto.client"
 import type { VaultRepository } from "../../../lib/vault/repository.client"
+import { VaultConflictError } from "../../../lib/vault/remote"
 import {
+  CredentialConflictError,
   VaultAlreadyExistsError,
+  VaultBusyError,
   VaultService,
 } from "../../../lib/vault/service.client"
 import {
@@ -15,7 +18,6 @@ import {
   type CredentialDraft,
   type VaultEnvelopeV1,
 } from "../../../lib/vault/types"
-import { VaultConflictError } from "../../../lib/vault/remote"
 import { CredentialValidationError } from "../../../lib/vault/validation"
 
 class MemoryVaultRepository implements VaultRepository {
@@ -361,38 +363,6 @@ describe("VaultService", () => {
     expect(service.listCredentials()).toHaveLength(1)
   })
 
-  it(
-    "retries an update after a concurrent vault change",
-    async () => {
-      const repository = new MemoryVaultRepository()
-      const service = createService(repository)
-      await service.createVault(passphrase)
-      await service.saveCredential(validDraft)
-      const existing = service.listCredentials()[0]
-      const originalSave = repository.save.bind(repository)
-      let conflictNextSave = true
-      repository.save = async (envelope) => {
-        if (conflictNextSave) {
-          conflictNextSave = false
-          repository.envelope = await createEnvelope([
-            { ...existing, notes: "Updated on another device" },
-          ])
-          throw new VaultConflictError()
-        }
-        await originalSave(envelope)
-      }
-
-      await service.updateCredential(existing.id, { riskLevel: "high" })
-
-      expect(service.listCredentials()[0]).toMatchObject({
-        id: existing.id,
-        notes: "Updated on another device",
-        riskLevel: "high",
-      })
-    },
-    15_000
-  )
-
   it("rejects a save built on data that a refresh just replaced", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
@@ -406,5 +376,168 @@ describe("VaultService", () => {
     await expect(saving).rejects.toThrow("Your vault changed")
     expect(service.listCredentials()).toEqual([migratedCredential])
     expect(repository.saveCalls).toBe(1)
+  })
+
+  describe("editing while another device saves", () => {
+    const otherCredential: Credential = {
+      ...validDraft,
+      id: "credential-other",
+      accountName: "Library",
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      passwordUpdatedAt: "2026-09-21T00:00:00.000Z",
+    }
+    const newerOnOtherDevice: Credential = {
+      ...migratedCredential,
+      password: "ChangedElsewhere!2026",
+      updatedAt: "2026-09-21T12:00:00.000Z",
+      passwordUpdatedAt: "2026-09-21T12:00:00.000Z",
+    }
+    const staleEdit = { ...validDraft, notes: "edited on this device" }
+
+    async function openVault(credentials: Credential[]) {
+      const repository = new MemoryVaultRepository()
+      repository.envelope = await createEnvelope(credentials)
+      const service = createService(repository)
+      await service.unlockVault(passphrase)
+      return { repository, service }
+    }
+    // The server rejects this device's next save because another device saved
+    // first, as the remote repository does for an outdated revision.
+    function rejectNextSaveWith(
+      repository: MemoryVaultRepository,
+      envelope: VaultEnvelopeV1
+    ) {
+      const save = repository.save.bind(repository)
+      repository.save = async () => {
+        repository.save = save
+        repository.saveCalls += 1
+        repository.envelope = envelope
+        throw new VaultConflictError()
+      }
+    }
+
+    it("reports a newer change that arrived by sync instead of overwriting it", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      const basedOn = migratedCredential.updatedAt
+
+      repository.envelope = await createEnvelope([newerOnOtherDevice])
+      await service.refresh()
+      const saves = repository.saveCalls
+
+      const error = await service
+        .updateCredential(migratedCredential.id, staleEdit, basedOn)
+        .catch((caught) => caught)
+      expect(error).toBeInstanceOf(CredentialConflictError)
+      expect((error as CredentialConflictError).latest).toEqual(
+        newerOnOtherDevice
+      )
+      expect(repository.saveCalls).toBe(saves)
+      expect(service.listCredentials()).toEqual([newerOnOtherDevice])
+    })
+
+    it("reports a newer change that the server reports before sync picks it up", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      rejectNextSaveWith(repository, await createEnvelope([newerOnOtherDevice]))
+
+      const error = await service
+        .updateCredential(
+          migratedCredential.id,
+          staleEdit,
+          migratedCredential.updatedAt
+        )
+        .catch((caught) => caught)
+      expect(error).toBeInstanceOf(CredentialConflictError)
+      expect((error as CredentialConflictError).latest).toEqual(
+        newerOnOtherDevice
+      )
+      expect(service.listCredentials()).toEqual([newerOnOtherDevice])
+      const reopened = createService(repository)
+      await reopened.unlockVault(passphrase)
+      expect(reopened.listCredentials()).toEqual([newerOnOtherDevice])
+    })
+
+    it("still saves when another device changed a different credential", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      rejectNextSaveWith(
+        repository,
+        await createEnvelope([otherCredential, migratedCredential])
+      )
+
+      const updated = await service.updateCredential(
+        migratedCredential.id,
+        staleEdit,
+        migratedCredential.updatedAt
+      )
+      expect(updated.notes).toBe("edited on this device")
+      const reopened = createService(repository)
+      await reopened.unlockVault(passphrase)
+      expect(reopened.listCredentials()).toEqual([otherCredential, updated])
+    })
+
+    it("reports a credential deleted on another device", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      repository.envelope = await createEnvelope([])
+      await service.refresh()
+
+      const error = await service
+        .updateCredential(
+          migratedCredential.id,
+          staleEdit,
+          migratedCredential.updatedAt
+        )
+        .catch((caught) => caught)
+      expect(error).toBeInstanceOf(CredentialConflictError)
+      expect((error as CredentialConflictError).latest).toBeNull()
+    })
+
+    it("replaces the newer version once the edit is based on it", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      repository.envelope = await createEnvelope([newerOnOtherDevice])
+      await service.refresh()
+
+      const updated = await service.updateCredential(
+        migratedCredential.id,
+        staleEdit,
+        newerOnOtherDevice.updatedAt
+      )
+      expect(updated.password).toBe(validDraft.password)
+      expect(service.listCredentials()).toEqual([updated])
+    })
+
+    it("retries while other devices keep saving, then asks to try again", async () => {
+      const { repository, service } = await openVault([migratedCredential])
+      const unrelated = await createEnvelope([
+        otherCredential,
+        migratedCredential,
+      ])
+      const save = repository.save.bind(repository)
+      let rejections = 3
+      repository.save = async (envelope) => {
+        if (rejections-- > 0) {
+          repository.saveCalls += 1
+          repository.envelope = unrelated
+          throw new VaultConflictError()
+        }
+        await save(envelope)
+      }
+
+      await expect(
+        service.updateCredential(
+          migratedCredential.id,
+          staleEdit,
+          migratedCredential.updatedAt
+        )
+      ).rejects.toBeInstanceOf(VaultBusyError)
+      expect(repository.saveCalls).toBe(3)
+
+      // With the other devices finished, the same edit saves.
+      const updated = await service.updateCredential(
+        migratedCredential.id,
+        staleEdit,
+        migratedCredential.updatedAt
+      )
+      expect(updated.notes).toBe("edited on this device")
+    })
   })
 })
