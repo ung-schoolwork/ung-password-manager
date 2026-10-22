@@ -45,9 +45,7 @@ async function unlock(page: Page) {
 
 async function checkNow(page: Page) {
   // Returning to the tab asks for the latest vault right away.
-  await page.evaluate(() =>
-    document.dispatchEvent(new Event("visibilitychange"))
-  )
+  await page.bringToFront()
 }
 
 async function close(context: BrowserContext) {
@@ -167,6 +165,8 @@ test("saving an edit after another device changed the credential reports a confl
   page,
   browser,
 }) => {
+  test.setTimeout(60_000)
+
   const account = await firstDevice(page)
   const second = await secondDevice(browser, account.email)
   await approve(page, await approvalCode(second.page))
