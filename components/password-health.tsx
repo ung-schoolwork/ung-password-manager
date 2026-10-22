@@ -26,7 +26,7 @@ export function PasswordHealth() {
     string | null
   >(null)
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1)
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -64,7 +64,11 @@ export function PasswordHealth() {
     }
 
     try {
-      await updateCredential(selectedCredential.id, { riskLevel })
+      await updateCredential(
+        selectedCredential.id,
+        { riskLevel },
+        selectedCredential.updatedAt
+      )
       setAccountName("")
       setSelectedCredentialId(null)
       setRiskLevel("medium")
@@ -81,7 +85,7 @@ export function PasswordHealth() {
     setAccountName(credential.accountName)
     setSelectedCredentialId(credential.id)
     setSuggestionsOpen(false)
-    setActiveSuggestionIndex(0)
+    setActiveSuggestionIndex(-1)
     setFormError(null)
   }
 
@@ -100,7 +104,9 @@ export function PasswordHealth() {
     } else if (event.key === "ArrowUp" && matchingCredentials.length > 0) {
       event.preventDefault()
       setSuggestionsOpen(true)
-      setActiveSuggestionIndex((index) => Math.max(index - 1, 0))
+      setActiveSuggestionIndex((index) =>
+        index < 0 ? matchingCredentials.length - 1 : Math.max(index - 1, 0)
+      )
     } else if (
       event.key === "Enter" &&
       suggestionsOpen &&
@@ -273,7 +279,9 @@ export function PasswordHealth() {
                   }
                   aria-controls="quick-account-suggestions"
                   aria-activedescendant={
-                    suggestionsOpen && matchingCredentials[activeSuggestionIndex]
+                    suggestionsOpen &&
+                    activeSuggestionIndex >= 0 &&
+                    matchingCredentials[activeSuggestionIndex]
                       ? `quick-account-option-${activeSuggestionIndex}`
                       : undefined
                   }
@@ -283,7 +291,7 @@ export function PasswordHealth() {
                   onChange={(event) => {
                     setAccountName(event.target.value)
                     setSelectedCredentialId(null)
-                    setActiveSuggestionIndex(0)
+                    setActiveSuggestionIndex(-1)
                     setSuggestionsOpen(true)
                     setFormError(null)
                   }}

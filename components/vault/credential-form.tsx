@@ -31,6 +31,8 @@ import {
   CredentialValidationError,
   type CredentialField,
 } from "@/lib/vault/validation"
+import { mergeEdit, toDraft } from "@/lib/vault/edit-merge"
+import { CredentialConflictError } from "@/lib/vault/service.client"
 
 const EMPTY_DRAFT: CredentialDraft = {
   accountName: "",
@@ -64,6 +66,7 @@ export function CredentialForm({
         }
       : EMPTY_DRAFT
   )
+  const [editBase, setEditBase] = useState(credential ?? null)
   const [errors, setErrors] = useState<
     Partial<Record<CredentialField, string>>
   >({})
@@ -95,7 +98,7 @@ export function CredentialForm({
 
     try {
       if (credential) {
-        await updateCredential(credential.id, draft)
+        await updateCredential(credential.id, draft, editBase?.updatedAt)
       } else {
         await addCredential(draft)
         setDraft(EMPTY_DRAFT)
@@ -105,6 +108,33 @@ export function CredentialForm({
     } catch (caught) {
       if (caught instanceof CredentialValidationError) {
         setErrors(caught.fields)
+        return
+      }
+
+      if (caught instanceof CredentialConflictError && editBase) {
+        if (!caught.latest) {
+          setMessage(
+            "This credential was deleted on another device. Close this form and refresh the vault."
+          )
+          return
+        }
+
+        const merged = mergeEdit(
+          toDraft(editBase),
+          draft,
+          toDraft(caught.latest)
+        )
+        setDraft(merged.draft)
+        setEditBase(caught.latest)
+        const changedFields = merged.updated
+          .map((field) => fieldLabel(field))
+          .join(", ")
+        const conflictingFields = merged.bothChanged
+          .map((field) => fieldLabel(field))
+          .join(", ")
+        setMessage(
+          `This credential changed on another device. The form now includes the other device's change${changedFields ? ` to ${changedFields}` : ""}.${conflictingFields ? ` Both devices changed ${conflictingFields}; your form's values were kept.` : ""} Review the form and save again.`
+        )
         return
       }
 
@@ -296,6 +326,23 @@ export function CredentialForm({
       </div>
     </form>
   )
+}
+
+function fieldLabel(field: keyof CredentialDraft): string {
+  switch (field) {
+    case "accountName":
+      return "the account name"
+    case "siteOrApp":
+      return "the website or app"
+    case "username":
+      return "the username"
+    case "password":
+      return "the password"
+    case "notes":
+      return "the notes"
+    case "riskLevel":
+      return "the risk level"
+  }
 }
 
 function isRiskLevel(value: string): value is RiskLevel {

@@ -16,7 +16,7 @@ import {
   Session,
   User,
 } from "../../../lib/auth/server"
-import { approvePendingDevice, removeDevice } from "../../../lib/devices/server"
+import { approvePendingDevice } from "../../../lib/devices/server"
 
 const origin = "http://127.0.0.1:3100"
 const prefix = `devices-${randomUUID()}`
@@ -277,14 +277,13 @@ describe("removing a device", () => {
   it("refuses removal on behalf of a device that is no longer approved", async () => {
     const { email, cookies } = await newAccount("stale")
     const second = await approvedSecondDevice(email)
-    const owner = await ownerId(email)
     const firstId = (await deviceState(cookies)).deviceId
 
-    assert.equal(await removeDevice(owner, firstId, second.id), "removed")
-    assert.equal(await removeDevice(owner, second.id, firstId), "not-approved")
-    // Through the API, the removed device is told it is no longer approved.
+    assert.equal((await del(second.id, cookies)).status, 200)
+    // A removed device can no longer act on behalf of the account.
     assert.equal((await del(firstId, second.cookies)).status, 403)
-    assert.equal(await removeDevice(owner, firstId, firstId), "current")
+    // The remaining approved device cannot remove itself.
+    assert.equal((await del(firstId, cookies)).status, 400)
     assert.equal(await approvedCount(email), 1)
   })
 

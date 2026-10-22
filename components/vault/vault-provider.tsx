@@ -47,7 +47,8 @@ interface VaultContextValue {
   addCredential(draft: CredentialDraft): Promise<Credential>
   updateCredential(
     id: string,
-    patch: Partial<CredentialDraft>
+    patch: Partial<CredentialDraft>,
+    basedOnUpdatedAt?: string
   ): Promise<Credential>
   removeCredential(id: string): Promise<void>
 }
@@ -325,11 +326,19 @@ function ApprovedVaultProvider({
   )
 
   const updateCredential = useCallback(
-    async (id: string, patch: Partial<CredentialDraft>) => {
+    async (
+      id: string,
+      patch: Partial<CredentialDraft>,
+      basedOnUpdatedAt?: string
+    ) => {
       const service = requireService()
       setBusy(true)
       try {
-        const credential = await service.updateCredential(id, patch)
+        const credential = await service.updateCredential(
+          id,
+          patch,
+          basedOnUpdatedAt
+        )
         refreshCredentials(service)
         queryClient.setQueryData(
           ["vault-revision", accountId],

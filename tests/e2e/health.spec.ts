@@ -23,8 +23,9 @@ test("opens Health from a credential shield", async ({ page }) => {
   await page.getByRole("button", { name: "Save credential" }).click()
 
   await page
-    .getByRole("link", { name: "Password health for University email" })
+    .getByRole("button", { name: "Password health for University email" })
     .click()
+  await page.getByRole("link", { name: /View full health report/ }).click()
 
   await expect(page).toHaveURL(/\/health$/)
   await expect(
@@ -86,4 +87,56 @@ test("shows saved password warnings and their reasons", async ({
     path: `artifacts/visual/health-${testInfo.project.name}.png`,
     fullPage: true,
   })
+})
+
+test("tags only a selected saved credential from keyboard or mouse suggestions", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page
+    .getByLabel("Vault password", { exact: true })
+    .fill("correct horse battery staple")
+  await page
+    .getByLabel("Confirm vault password")
+    .fill("correct horse battery staple")
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await page.getByLabel("Account label").fill("University email")
+  await page.getByLabel("Website or app").fill("mail.example.edu")
+  await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
+  await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+  await page.getByRole("button", { name: "Save credential" }).click()
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+
+  const accountInput = page.getByRole("combobox", { name: "Account name" })
+  const suggestions = page.getByRole("listbox", {
+    name: "Matching saved accounts",
+  })
+  const reports = page.getByRole("list", { name: "Password health reports" })
+
+  await accountInput.fill("mail.example")
+  await expect(suggestions.getByRole("option")).toHaveCount(1)
+  await expect(suggestions.getByText("University email")).toBeVisible()
+  await expect(suggestions.getByText("mail.example.edu")).toBeVisible()
+  await suggestions.getByRole("option").click()
+  await page.getByLabel("Risk level").selectOption("high")
+  await page.getByRole("button", { name: "Save risk level" }).click()
+  await expect(
+    reports.getByRole("listitem").getByText("high", { exact: true })
+  ).toBeVisible()
+
+  await accountInput.fill("University")
+  await accountInput.press("ArrowDown")
+  await accountInput.press("Enter")
+  await page.getByLabel("Risk level").selectOption("low")
+  await page.getByRole("button", { name: "Save risk level" }).click()
+  await expect(
+    reports.getByRole("listitem").getByText("low", { exact: true })
+  ).toBeVisible()
+
+  await accountInput.fill("not a saved account")
+  await page.getByRole("button", { name: "Save risk level" }).click()
+  await expect(
+    page.getByText("Select a saved account from the suggestions.")
+  ).toBeVisible()
+  await expect(reports.getByRole("listitem")).toHaveCount(1)
 })

@@ -34,6 +34,20 @@ export class VaultNotFoundError extends Error {
   }
 }
 
+export class CredentialConflictError extends Error {
+  constructor(readonly latest: Credential | null) {
+    super("This credential changed on another device.")
+    this.name = "CredentialConflictError"
+  }
+}
+
+export class VaultBusyError extends Error {
+  constructor() {
+    super("The vault is changing on another device. Try saving again.")
+    this.name = "VaultBusyError"
+  }
+}
+
 interface VaultServiceDependencies {
   now: () => Date
   createId: () => string
@@ -164,15 +178,26 @@ export class VaultService {
 
   async updateCredential(
     id: string,
-    patch: Partial<CredentialDraft>
+    patch: Partial<CredentialDraft>,
+    basedOnUpdatedAt?: string
   ): Promise<Credential> {
-    let conflicts = 0
-    while (true) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       const { data } = this.requireUnlocked()
       const existing = data.credentials.find(
         (credential) => credential.id === id
       )
-      if (!existing) throw new Error("Credential not found.")
+      if (!existing) {
+        if (basedOnUpdatedAt !== undefined) {
+          throw new CredentialConflictError(null)
+        }
+        throw new Error("Credential not found.")
+      }
+      if (
+        basedOnUpdatedAt !== undefined &&
+        existing.updatedAt !== basedOnUpdatedAt
+      ) {
+        throw new CredentialConflictError(existing)
+      }
 
       const normalized = validateCredentialDraft({ ...existing, ...patch })
       const timestamp = this.dependencies.now().toISOString()
@@ -195,13 +220,25 @@ export class VaultService {
         })
         return { ...updated }
       } catch (caught) {
-        if (!(caught instanceof VaultConflictError) || conflicts >= 1) {
+        if (!(caught instanceof VaultConflictError)) {
           throw caught
         }
-        conflicts++
+
+        if (attempt === 2) throw new VaultBusyError()
         await this.refresh()
+        const latest = this.listCredentials().find(
+          (credential) => credential.id === id
+        )
+        if (
+          basedOnUpdatedAt !== undefined &&
+          latest?.updatedAt !== basedOnUpdatedAt
+        ) {
+          throw new CredentialConflictError(latest ?? null)
+        }
       }
     }
+
+    throw new VaultBusyError()
   }
 
   async removeCredential(id: string): Promise<void> {
