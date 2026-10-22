@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import {
   createContext,
@@ -27,7 +27,7 @@ import { VaultService } from "@/lib/vault/service.client"
 import type { Credential, CredentialDraft } from "@/lib/vault/types"
 
 type VaultStatus =
-  "loading" | "device-pending" | "needs-setup" | "locked" | "unlocked" | "error"
+  | "loading" | "device-pending" | "needs-setup" | "locked" | "unlocked" | "error"
 
 export const VAULT_POLL_INTERVAL_MS = 15_000
 const DEVICE_POLL_INTERVAL_MS = 3_000
@@ -241,12 +241,16 @@ function ApprovedVaultProvider({
         await service.createVault(passphrase)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
+        queryClient.setQueryData(
+          ["vault-revision", accountId],
+          service.knownRevision()
+        )
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService]
+    [accountId, queryClient, refreshCredentials, requireService]
   )
 
   const migrateVault = useCallback(
@@ -264,12 +268,16 @@ function ApprovedVaultProvider({
         await service.migrateVault(passphrase, envelope)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
+        queryClient.setQueryData(
+          ["vault-revision", accountId],
+          service.knownRevision()
+        )
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [accountId, refreshCredentials, requireService]
+    [accountId, queryClient, refreshCredentials, requireService]
   )
   const unlockVault = useCallback(
     async (passphrase: string) => {
@@ -279,12 +287,16 @@ function ApprovedVaultProvider({
         await service.unlockVault(passphrase)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
+        queryClient.setQueryData(
+          ["vault-revision", accountId],
+          service.knownRevision()
+        )
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService]
+    [accountId, queryClient, refreshCredentials, requireService]
   )
 
   const lockVault = useCallback(() => {
@@ -300,12 +312,16 @@ function ApprovedVaultProvider({
       try {
         const credential = await service.saveCredential(draft)
         refreshCredentials(service)
+        queryClient.setQueryData(
+          ["vault-revision", accountId],
+          service.knownRevision()
+        )
         return credential
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService]
+    [accountId, queryClient, refreshCredentials, requireService]
   )
 
   const updateCredential = useCallback(
@@ -315,12 +331,16 @@ function ApprovedVaultProvider({
       try {
         const credential = await service.updateCredential(id, patch)
         refreshCredentials(service)
+        queryClient.setQueryData(
+          ["vault-revision", accountId],
+          service.knownRevision()
+        )
         return credential
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService]
+    [accountId, queryClient, refreshCredentials, requireService]
   )
 
   const removeCredential = useCallback(
@@ -330,11 +350,15 @@ function ApprovedVaultProvider({
       try {
         await service.removeCredential(id)
         refreshCredentials(service)
+        queryClient.setQueryData(
+          ["vault-revision", accountId],
+          service.knownRevision()
+        )
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService]
+    [accountId, queryClient, refreshCredentials, requireService]
   )
 
   return (

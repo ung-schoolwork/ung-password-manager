@@ -15,6 +15,7 @@ import {
   type CredentialDraft,
   type VaultEnvelopeV1,
 } from "../../../lib/vault/types"
+import { VaultConflictError } from "../../../lib/vault/remote"
 import { CredentialValidationError } from "../../../lib/vault/validation"
 
 class MemoryVaultRepository implements VaultRepository {
@@ -359,6 +360,38 @@ describe("VaultService", () => {
     expect(service.isUnlocked()).toBe(true)
     expect(service.listCredentials()).toHaveLength(1)
   })
+
+  it(
+    "retries an update after a concurrent vault change",
+    async () => {
+      const repository = new MemoryVaultRepository()
+      const service = createService(repository)
+      await service.createVault(passphrase)
+      await service.saveCredential(validDraft)
+      const existing = service.listCredentials()[0]
+      const originalSave = repository.save.bind(repository)
+      let conflictNextSave = true
+      repository.save = async (envelope) => {
+        if (conflictNextSave) {
+          conflictNextSave = false
+          repository.envelope = await createEnvelope([
+            { ...existing, notes: "Updated on another device" },
+          ])
+          throw new VaultConflictError()
+        }
+        await originalSave(envelope)
+      }
+
+      await service.updateCredential(existing.id, { riskLevel: "high" })
+
+      expect(service.listCredentials()[0]).toMatchObject({
+        id: existing.id,
+        notes: "Updated on another device",
+        riskLevel: "high",
+      })
+    },
+    15_000
+  )
 
   it("rejects a save built on data that a refresh just replaced", async () => {
     const repository = new MemoryVaultRepository()

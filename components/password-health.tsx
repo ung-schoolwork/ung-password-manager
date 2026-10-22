@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, type FormEvent } from "react"
+import { useMemo, useState, type FormEvent, type KeyboardEvent } from "react"
 import { AlertTriangle, KeyRound, Plus } from "lucide-react"
 
 import { useVault } from "@/components/vault/vault-provider"
@@ -16,15 +16,29 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import type { RiskLevel } from "@/lib/vault/types"
+import type { Credential, RiskLevel } from "@/lib/vault/types"
 import { HealthShield, type HealthStatus } from "@/components/vault/health-shield"
 
 export function PasswordHealth() {
-  const { credentials, addCredential, updateCredential } = useVault()
+  const { credentials, updateCredential, busy } = useVault()
   const [accountName, setAccountName] = useState("")
+  const [selectedCredentialId, setSelectedCredentialId] = useState<
+    string | null
+  >(null)
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
 
+  const matchingCredentials = credentials.filter((credential) => {
+    const query = accountName.trim().toLowerCase()
+    return (
+      query.length > 0 &&
+      `${credential.accountName} ${credential.siteOrApp}`
+        .toLowerCase()
+        .includes(query)
+    )
+  })
   const auditedAccounts = useMemo(
     () => analyzeCredentialsHealth(credentials),
     [credentials]
@@ -41,44 +55,59 @@ export function PasswordHealth() {
     e.preventDefault()
     setFormError(null)
 
-    if (!accountName.trim()) {
-      setFormError("Enter an account name.")
+    const selectedCredential = credentials.find(
+      (credential) => credential.id === selectedCredentialId
+    )
+    if (!selectedCredential) {
+      setFormError("Select a saved account from the suggestions.")
       return
     }
 
-    const existing = credentials.find(
-      (c) => c.accountName.toLowerCase() === accountName.trim().toLowerCase()
-    )
-
-    if (existing) {
-      const confirmed = window.confirm(
-        `An account named "${existing.accountName}" already exists. Do you want to overwrite its risk rating?`
+    try {
+      await updateCredential(selectedCredential.id, { riskLevel })
+      setAccountName("")
+      setSelectedCredentialId(null)
+      setRiskLevel("medium")
+    } catch (caught) {
+      setFormError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not update existing credential."
       )
-      if (!confirmed) return
+    }
+  }
 
-      try {
-        await updateCredential(existing.id, { riskLevel })
-        setAccountName("")
-        setRiskLevel("medium")
-        return
-      } catch {
-        setFormError("Could not update existing credential.")
-        return
-      }
+  function selectCredential(credential: Credential) {
+    setAccountName(credential.accountName)
+    setSelectedCredentialId(credential.id)
+    setSuggestionsOpen(false)
+    setActiveSuggestionIndex(0)
+    setFormError(null)
+  }
+
+  function handleAccountKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setSuggestionsOpen(false)
+      return
     }
 
-    try {
-      await addCredential({
-        accountName: accountName.trim(),
-        siteOrApp: "example.com",
-        username: "user@example.com",
-        password: "password123",
-        riskLevel,
-      })
-      setAccountName("")
-      setRiskLevel("medium")
-    } catch {
-      setFormError("Could not save credential.")
+    if (event.key === "ArrowDown" && matchingCredentials.length > 0) {
+      event.preventDefault()
+      setSuggestionsOpen(true)
+      setActiveSuggestionIndex((index) =>
+        Math.min(index + 1, matchingCredentials.length - 1)
+      )
+    } else if (event.key === "ArrowUp" && matchingCredentials.length > 0) {
+      event.preventDefault()
+      setSuggestionsOpen(true)
+      setActiveSuggestionIndex((index) => Math.max(index - 1, 0))
+    } else if (
+      event.key === "Enter" &&
+      suggestionsOpen &&
+      matchingCredentials[activeSuggestionIndex]
+    ) {
+      event.preventDefault()
+      selectCredential(matchingCredentials[activeSuggestionIndex])
     }
   }
 
@@ -220,9 +249,9 @@ export function PasswordHealth() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Add Account Credential</CardTitle>
+          <CardTitle className="text-base">Tag Existing Account</CardTitle>
           <CardDescription className="text-xs">
-            Tag an account by risk level to prioritize its security warnings.
+            Choose a saved account to prioritize its security warnings.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -232,12 +261,66 @@ export function PasswordHealth() {
           >
             <div className="flex-1 space-y-1.5">
               <Label htmlFor="quick-account-name">Account name</Label>
-              <Input
-                id="quick-account-name"
-                placeholder="e.g., Student Database"
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-              />
+              <div className="relative">
+                <Input
+                  id="quick-account-name"
+                  placeholder="Type to search saved accounts"
+                  value={accountName}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={
+                    suggestionsOpen && matchingCredentials.length > 0
+                  }
+                  aria-controls="quick-account-suggestions"
+                  aria-activedescendant={
+                    suggestionsOpen && matchingCredentials[activeSuggestionIndex]
+                      ? `quick-account-option-${activeSuggestionIndex}`
+                      : undefined
+                  }
+                  onFocus={() => setSuggestionsOpen(true)}
+                  onBlur={() => setSuggestionsOpen(false)}
+                  onKeyDown={handleAccountKeyDown}
+                  onChange={(event) => {
+                    setAccountName(event.target.value)
+                    setSelectedCredentialId(null)
+                    setActiveSuggestionIndex(0)
+                    setSuggestionsOpen(true)
+                    setFormError(null)
+                  }}
+                />
+                {suggestionsOpen && matchingCredentials.length > 0 ? (
+                  <ul
+                    id="quick-account-suggestions"
+                    className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+                    role="listbox"
+                    aria-label="Matching saved accounts"
+                  >
+                    {matchingCredentials.map((credential, index) => (
+                      <li
+                        key={credential.id}
+                        id={`quick-account-option-${index}`}
+                        className={cn(
+                          "cursor-pointer rounded-sm px-3 py-2 text-sm",
+                          index === activeSuggestionIndex
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-accent/50"
+                        )}
+                        role="option"
+                        aria-selected={index === activeSuggestionIndex}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectCredential(credential)}
+                      >
+                        <span className="block font-medium">
+                          {credential.accountName}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {credential.siteOrApp}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             </div>
             <div className="w-full sm:w-48 space-y-1.5">
               <Label htmlFor="quick-risk-level">Risk level</Label>
@@ -252,9 +335,13 @@ export function PasswordHealth() {
                 <option value="high">High Risk</option>
               </select>
             </div>
-            <Button type="submit" className="h-7 px-4">
+            <Button
+              type="submit"
+              className="h-7 px-4"
+              disabled={busy || credentials.length === 0}
+            >
               <Plus className="size-3.5" aria-hidden="true" />
-              Save
+              Save risk level
             </Button>
           </form>
           {formError && (

@@ -166,30 +166,42 @@ export class VaultService {
     id: string,
     patch: Partial<CredentialDraft>
   ): Promise<Credential> {
-    const { data } = this.requireUnlocked()
-    const existing = data.credentials.find((credential) => credential.id === id)
-    if (!existing) throw new Error("Credential not found.")
+    let conflicts = 0
+    while (true) {
+      const { data } = this.requireUnlocked()
+      const existing = data.credentials.find(
+        (credential) => credential.id === id
+      )
+      if (!existing) throw new Error("Credential not found.")
 
-    const normalized = validateCredentialDraft({ ...existing, ...patch })
-    const timestamp = this.dependencies.now().toISOString()
-    const updated: Credential = {
-      ...existing,
-      ...normalized,
-      updatedAt: timestamp,
-      passwordUpdatedAt:
-        normalized.password === existing.password
-          ? existing.passwordUpdatedAt
-          : timestamp,
+      const normalized = validateCredentialDraft({ ...existing, ...patch })
+      const timestamp = this.dependencies.now().toISOString()
+      const updated: Credential = {
+        ...existing,
+        ...normalized,
+        updatedAt: timestamp,
+        passwordUpdatedAt:
+          normalized.password === existing.password
+            ? existing.passwordUpdatedAt
+            : timestamp,
+      }
+
+      try {
+        await this.persist({
+          ...data,
+          credentials: data.credentials.map((credential) =>
+            credential.id === id ? updated : credential
+          ),
+        })
+        return { ...updated }
+      } catch (caught) {
+        if (!(caught instanceof VaultConflictError) || conflicts >= 1) {
+          throw caught
+        }
+        conflicts++
+        await this.refresh()
+      }
     }
-
-    await this.persist({
-      ...data,
-      credentials: data.credentials.map((credential) =>
-        credential.id === id ? updated : credential
-      ),
-    })
-
-    return { ...updated }
   }
 
   async removeCredential(id: string): Promise<void> {

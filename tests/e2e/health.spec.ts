@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises"
+﻿import { mkdir } from "node:fs/promises"
 
 import { expect, test } from "./fixtures"
 import { registerAccount } from "./account-helpers"
@@ -21,10 +21,17 @@ test("opens Health from a credential shield", async ({ page }) => {
   await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("private-password-123")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeHidden({ timeout: 15_000 })
 
+  // Click the shield button to open the popover
   await page
-    .getByRole("link", { name: "Password health for University email" })
+    .getByRole("button", { name: "Password health for University email" })
     .click()
+
+  // Click the link inside the popover to navigate to /health
+  await page.getByRole("link", { name: "View full health report →" }).click()
 
   await expect(page).toHaveURL(/\/health$/)
   await expect(
@@ -51,8 +58,15 @@ test("shows saved password warnings and their reasons", async ({
     .fill("student@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeHidden({ timeout: 15_000 })
+  await expect(
+    page.getByText("University email", { exact: true })
+  ).toBeVisible()
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
+  await expect(page).toHaveURL(/\/health$/)
   await expect(
     page.getByText("Vault Password Health", { exact: true })
   ).toBeVisible()
@@ -64,7 +78,14 @@ test("shows saved password warnings and their reasons", async ({
   )
 
   await page.getByRole("link", { name: "Vault" }).click()
+  await expect(page).toHaveURL(/\/vault$/)
+  await expect(
+    page.getByText("Saved credentials", { exact: true })
+  ).toBeVisible()
   await page.getByRole("button", { name: "Add credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
   await page.getByLabel("Account label").fill("Backup email")
   await page.getByLabel("Website or app").fill("backup.example.edu")
   await page
@@ -72,8 +93,15 @@ test("shows saved password warnings and their reasons", async ({
     .fill("backup@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeHidden({ timeout: 15_000 })
+  await expect(
+    page.getByText("Backup email", { exact: true })
+  ).toBeVisible()
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
+  await expect(page).toHaveURL(/\/health$/)
   const reports = page.getByRole("list", { name: "Password health reports" })
   await expect(reports.getByRole("listitem")).toHaveCount(2)
   await expect(reports.getByText("Reused:")).toHaveCount(2)

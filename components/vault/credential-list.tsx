@@ -1,7 +1,7 @@
-"use client"
+﻿"use client"
 
 import { useMemo } from "react"
-import { KeyRound, Pencil, Plus, Upload } from "lucide-react"
+import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, Upload } from "lucide-react"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
 import { HealthShield } from "@/components/vault/health-shield"
 import {
@@ -20,6 +27,7 @@ import {
   type CredentialHealthReport,
 } from "@/lib/vault/health"
 import type { Credential } from "@/lib/vault/types"
+import { cn } from "@/lib/utils"
 
 export function CredentialList({
   credentials,
@@ -117,9 +125,10 @@ function CredentialRow({
   onEdit(): void
 }) {
   const hasWarnings = credential.warnings.length > 0
+  const risk = credential.riskLevel || "low"
   const status = !hasWarnings
     ? "success"
-    : credential.riskLevel === "high"
+    : risk === "high"
       ? "danger"
       : "warning"
 
@@ -129,13 +138,96 @@ function CredentialRow({
       data-credential-id={credential.id}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <Link
-          aria-label={`Password health for ${credential.accountName}`}
-          className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          href="/health"
-        >
-          <HealthShield status={status} size="sm" />
-        </Link>
+        <Popover>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Password health for ${credential.accountName}`}
+                className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40 cursor-pointer"
+              />
+            }
+          >
+            <HealthShield status={status} size="sm" />
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80 space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <PopoverTitle className="truncate font-semibold text-sm">
+                  {credential.accountName}
+                </PopoverTitle>
+                <PopoverDescription className="truncate text-xs text-muted-foreground">
+                  {credential.siteOrApp}
+                </PopoverDescription>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[0.6875rem] font-bold uppercase",
+                    risk === "high"
+                      ? "bg-destructive/10 text-destructive"
+                      : risk === "medium"
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  )}
+                >
+                  {risk}
+                </span>
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[0.6875rem] font-bold",
+                    hasWarnings
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  )}
+                >
+                  {hasWarnings
+                    ? `${credential.warnings.length} ${
+                        credential.warnings.length === 1 ? "issue" : "issues"
+                      }`
+                    : "No warnings"}
+                </span>
+              </div>
+            </div>
+
+            {hasWarnings ? (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto" role="list" aria-label="Password warnings">
+                {credential.warnings.map((w, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive"
+                  >
+                    <AlertTriangle
+                      className="mt-0.5 size-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <span className="font-bold">{w.type}: </span>
+                      <span>{w.explanation}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2
+                  className="size-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>No security issues found for this password.</span>
+              </div>
+            )}
+
+            <div className="border-t pt-2">
+              <Link
+                href="/health"
+                className="text-xs font-medium text-primary underline underline-offset-4 hover:text-primary/80"
+              >
+                View full health report →
+              </Link>
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <dl className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-2">

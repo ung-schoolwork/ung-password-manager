@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test"
+﻿import { expect, type Page } from "@playwright/test"
 import { setTestClientIp } from "./fixtures"
 
 export const accountPassword = "account-password-only-123"
@@ -27,14 +27,14 @@ export async function createVault(page: Page) {
   await page.getByRole("button", { name: "Create encrypted vault" }).click()
   await expect(
     page.getByRole("dialog", { name: "Add a credential" })
-  ).toBeVisible()
+  ).toBeVisible({ timeout: 15_000 })
 }
 
 /** Reads the code a signed-in but unapproved device shows while it waits. */
 export async function approvalCode(page: Page) {
   await expect(
     page.getByRole("heading", { name: "Approve this device" })
-  ).toBeVisible()
+  ).toBeVisible({ timeout: 15_000 })
   const text = await page.getByLabel("Device approval code").innerText()
   const code = text.replace(/\s/g, "")
   expect(code).toMatch(/^\d{8}$/)
