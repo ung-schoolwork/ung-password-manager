@@ -87,3 +87,86 @@ test("shows saved password warnings and their reasons", async ({
     fullPage: true,
   })
 })
+
+test("tags only the selected saved account from keyboard or mouse suggestions", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page
+    .getByLabel("Vault password", { exact: true })
+    .fill("correct horse battery staple")
+  await page
+    .getByLabel("Confirm vault password")
+    .fill("correct horse battery staple")
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+
+  async function saveCredential(site: string) {
+    await page.getByLabel("Account label").fill("University email")
+    await page.getByLabel("Website or app").fill(site)
+    await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
+    await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+    await page.getByRole("button", { name: "Save credential" }).click()
+    await expect(
+      page.getByRole("dialog", { name: "Add a credential" })
+    ).toHaveCount(0)
+  }
+
+  await saveCredential("mail.example.edu")
+  await page.getByRole("button", { name: "Add credential" }).click()
+  await saveCredential("backup.example.edu")
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+
+  const accountInput = page.getByRole("combobox", { name: "Account name" })
+  const suggestions = page.getByRole("listbox", {
+    name: "Matching saved accounts",
+  })
+  const tagCard = page
+    .locator('[data-slot="card"]')
+    .filter({ hasText: "Tag Existing Account" })
+  const reports = page.getByRole("list", { name: "Password health reports" })
+
+  await accountInput.fill("University email")
+  await expect(suggestions.getByRole("option")).toHaveCount(2)
+  await expect(suggestions.getByText("mail.example.edu")).toBeVisible()
+  await expect(suggestions.getByText("backup.example.edu")).toBeVisible()
+  await expect(tagCard).toHaveCSS("overflow", "visible")
+  const [inputBounds, suggestionBounds] = await Promise.all([
+    accountInput.boundingBox(),
+    suggestions.boundingBox(),
+  ])
+  expect(inputBounds).not.toBeNull()
+  expect(suggestionBounds).not.toBeNull()
+  expect(suggestionBounds!.y).toBeGreaterThanOrEqual(
+    inputBounds!.y + inputBounds!.height - 1
+  )
+  await suggestions
+    .getByRole("option")
+    .filter({ hasText: "backup.example.edu" })
+    .click()
+  await page.getByLabel("Risk level").selectOption("high")
+  await page.getByRole("button", { name: "Save risk level" }).click()
+
+  const backupReport = reports
+    .getByRole("listitem")
+    .filter({ hasText: "backup.example.edu" })
+  const mailReport = reports
+    .getByRole("listitem")
+    .filter({ hasText: "mail.example.edu" })
+  await expect(reports.getByRole("listitem")).toHaveCount(2)
+  await expect(backupReport.getByText("high", { exact: true })).toBeVisible()
+  await expect(mailReport.getByText("low", { exact: true })).toBeVisible()
+
+  await accountInput.fill("mail.example.edu")
+  await accountInput.press("Enter")
+  await page.getByLabel("Risk level").selectOption("medium")
+  await page.getByRole("button", { name: "Save risk level" }).click()
+  await expect(mailReport.getByText("medium", { exact: true })).toBeVisible()
+  await expect(backupReport.getByText("high", { exact: true })).toBeVisible()
+
+  await accountInput.fill("not a saved account")
+  await page.getByRole("button", { name: "Save risk level" }).click()
+  await expect(
+    page.getByText("Select a saved account from the suggestions.")
+  ).toBeVisible()
+  await expect(reports.getByRole("listitem")).toHaveCount(2)
+})
