@@ -49,7 +49,7 @@ Each browser is identified by a long-lived, HttpOnly device cookie and registere
 
 ## Development
 
-Copy `.env.example` to `.env.local`. Set `MONGODB_URI` to your MongoDB Atlas database (or a local MongoDB instance) and `APP_ORIGIN` to the exact origin you will open, such as `http://localhost:3000`. If `APP_ORIGIN` is unset, any origin is accepted outside production. Production requires it, and it must be HTTPS. Keep database credentials server-side; never use `NEXT_PUBLIC_*` for them.
+Copy `.env.example` to `.env.local`. Set `MONGODB_URI` to your MongoDB Atlas database (or a local MongoDB instance) and `APP_ORIGIN` to the exact origin you will open, such as `http://localhost:3000`. If `APP_ORIGIN` is unset, any origin is accepted outside production. Production requires it, and it must be HTTPS. Keep database credentials server-side; never use `NEXT_PUBLIC_*` for them. Set `SHARE_ENCRYPTION_KEY` to a 32-byte base64 value (generate one with `openssl rand -base64 32`) to enable sharing a credential with another account; sharing fails closed without it.
 
 Production also requires `AUTH_TRUSTED_IP_HEADER` naming a header that your trusted reverse proxy **overwrites** with a single validated client IP. Do not enable it behind a proxy that forwards arbitrary client-supplied values. Missing or invalid source identity fails closed. Development without this setting uses a shared loopback source. Login and registration share database-backed global, source, and source/account rate limits; no account-wide lockout is shared between sources. Hashing is limited to two concurrent jobs per process. Add perimeter request limits when deploying; application throttling is not DDoS protection.
 
