@@ -1,0 +1,140 @@
+diff --git a/lib/bson.bundle.js b/lib/bson.bundle.js
+index f79f5777857ef11d1c994820f15b51152ce8e333..b4ec85321349e3c0e838c42d4b09ee0ecdaef228 100644
+--- a/lib/bson.bundle.js
++++ b/lib/bson.bundle.js
+@@ -2617,9 +2617,20 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+-        if (startupSnapshot?.isBuildingSnapshot?.()) {
+-            startupSnapshot?.addDeserializeCallback?.(this.resetState);
++        try {
++
++            const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++
++            if (startupSnapshot?.isBuildingSnapshot?.()) {
++
++                startupSnapshot?.addDeserializeCallback?.(this.resetState);
++
++            }
++
++        } catch {
++
++            // Bun's node:v8 shim does not implement startupSnapshot; safe to ignore.
++
+         }
+     }
+     static cacheHexString;
+diff --git a/lib/bson.cjs b/lib/bson.cjs
+index 34c088837e246538a9f1617cba21cd98a2e34b9c..d3d39d4446d0957a67b635268dd334ac23eef0fe 100644
+--- a/lib/bson.cjs
++++ b/lib/bson.cjs
+@@ -2616,9 +2616,20 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+-        if (startupSnapshot?.isBuildingSnapshot?.()) {
+-            startupSnapshot?.addDeserializeCallback?.(this.resetState);
++        try {
++
++            const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++
++            if (startupSnapshot?.isBuildingSnapshot?.()) {
++
++                startupSnapshot?.addDeserializeCallback?.(this.resetState);
++
++            }
++
++        } catch {
++
++            // Bun's node:v8 shim does not implement startupSnapshot; safe to ignore.
++
+         }
+     }
+     static cacheHexString;
+diff --git a/lib/bson.mjs b/lib/bson.mjs
+index 3e666498d7ec26fee3a137ebc8475df42fb416ac..ed30e79d8dd46ccfdb8fa1c346fab56b8aa1dfa6 100644
+--- a/lib/bson.mjs
++++ b/lib/bson.mjs
+@@ -2614,9 +2614,20 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+-        if (startupSnapshot?.isBuildingSnapshot?.()) {
+-            startupSnapshot?.addDeserializeCallback?.(this.resetState);
++        try {
++
++            const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++
++            if (startupSnapshot?.isBuildingSnapshot?.()) {
++
++                startupSnapshot?.addDeserializeCallback?.(this.resetState);
++
++            }
++
++        } catch {
++
++            // Bun's node:v8 shim does not implement startupSnapshot; safe to ignore.
++
+         }
+     }
+     static cacheHexString;
+diff --git a/lib/bson.node.mjs b/lib/bson.node.mjs
+index 02893af97c35ae9f1d249be3f17f1caca32ae8ab..a2d6f72b145b519906bec1c1a669eefba37f82a4 100644
+--- a/lib/bson.node.mjs
++++ b/lib/bson.node.mjs
+@@ -2614,9 +2614,20 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+-        if (startupSnapshot?.isBuildingSnapshot?.()) {
+-            startupSnapshot?.addDeserializeCallback?.(this.resetState);
++        try {
++
++            const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++
++            if (startupSnapshot?.isBuildingSnapshot?.()) {
++
++                startupSnapshot?.addDeserializeCallback?.(this.resetState);
++
++            }
++
++        } catch {
++
++            // Bun's node:v8 shim does not implement startupSnapshot; safe to ignore.
++
+         }
+     }
+     static cacheHexString;
+diff --git a/lib/bson.rn.cjs b/lib/bson.rn.cjs
+index 8308a184b4df49d4d622700220980509b6f1ae0e..f1f0494128ed4dead273da16080ba5b32b99c98e 100644
+--- a/lib/bson.rn.cjs
++++ b/lib/bson.rn.cjs
+@@ -2624,9 +2624,20 @@ class ObjectId extends BSONValue {
+     };
+     static {
+         this.resetState();
+-        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
+-        if (startupSnapshot?.isBuildingSnapshot?.()) {
+-            startupSnapshot?.addDeserializeCallback?.(this.resetState);
++        try {
++
++            const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.('v8') ?? {};
++
++            if (startupSnapshot?.isBuildingSnapshot?.()) {
++
++                startupSnapshot?.addDeserializeCallback?.(this.resetState);
++
++            }
++
++        } catch {
++
++            // Bun's node:v8 shim does not implement startupSnapshot; safe to ignore.
++
+         }
+     }
+     static cacheHexString;
