@@ -163,6 +163,92 @@ test("a change on one approved device appears on another", async ({
   await close(second.context)
 })
 
+test("saving an edit after another device changed the credential reports a conflict", async ({
+  page,
+  browser,
+}) => {
+  const account = await firstDevice(page)
+  const second = await secondDevice(browser, account.email)
+  await approve(page, await approvalCode(second.page))
+  await expect(
+    second.page.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible({ timeout: 15_000 })
+  await unlock(second.page)
+
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "Add credential" }).first().click()
+  await page.getByLabel("Account label").fill("Shared login")
+  await page.getByLabel("Website or app").fill("shared.example.test")
+  await page.getByLabel("Username", { exact: true }).fill("shared-user")
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("original-shared-password-123")
+  await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(page.getByText("Shared login")).toBeVisible()
+  await expect(async () => {
+    await checkNow(second.page)
+    await expect(second.page.getByText("Shared login")).toBeVisible({
+      timeout: 1_000,
+    })
+  }).toPass({ timeout: 20_000 })
+
+  // The second device starts editing from the original version.
+  await second.page.getByRole("button", { name: "Edit Shared login" }).click()
+  const staleDialog = second.page.getByRole("dialog", {
+    name: "Edit credential",
+  })
+  await expect(staleDialog).toBeVisible()
+
+  // Meanwhile the first device changes the password and saves.
+  await page.getByRole("button", { name: "Edit Shared login" }).click()
+  const dialog = page.getByRole("dialog", { name: "Edit credential" })
+  await dialog
+    .getByLabel("Password", { exact: true })
+    .fill("changed-on-first-device-456")
+  await dialog.getByRole("button", { name: "Save changes" }).click()
+  await expect(dialog).toHaveCount(0)
+
+  await staleDialog
+    .getByLabel("Notes (optional)")
+    .fill("Edited on the second device")
+  await staleDialog.getByRole("button", { name: "Save changes" }).click()
+  const notice = staleDialog
+    .getByRole("alert")
+    .filter({ hasText: "changed on another device" })
+  await expect(notice).toBeVisible()
+  await expect(notice).toContainText(
+    "The form now includes the other device's change to the password."
+  )
+  // The other device's password is filled in and this device's notes are kept.
+  await expect(staleDialog.getByLabel("Password", { exact: true })).toHaveValue(
+    "changed-on-first-device-456"
+  )
+  await expect(staleDialog.getByLabel("Notes (optional)")).toHaveValue(
+    "Edited on the second device"
+  )
+  await staleDialog.getByRole("button", { name: "Save changes" }).click()
+  await expect(staleDialog).toHaveCount(0)
+
+  // The first device receives the second device's notes with its own password.
+  await expect(async () => {
+    await checkNow(page)
+    await page.getByRole("button", { name: "Edit Shared login" }).click()
+    const latest = page.getByRole("dialog", { name: "Edit credential" })
+    try {
+      await expect(latest.getByLabel("Notes (optional)")).toHaveValue(
+        "Edited on the second device",
+        { timeout: 1_000 }
+      )
+      await expect(latest.getByLabel("Password", { exact: true })).toHaveValue(
+        "changed-on-first-device-456"
+      )
+    } finally {
+      await latest.getByRole("button", { name: "Cancel" }).click()
+    }
+  }).toPass({ timeout: 20_000 })
+  await close(second.context)
+})
+
 test("a removed device loses access and goes back to waiting for approval", async ({
   page,
   browser,

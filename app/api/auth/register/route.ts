@@ -30,8 +30,8 @@ export async function POST(request: Request) {
     const user = await User.create({ email: input.email, passwordHash, salt })
     try {
       const response = await issueSession(user, 201)
-      const { newToken } = await ensureDevice(request, String(user._id))
-      if (newToken) setDeviceCookie(response, newToken)
+      const { deviceCookie } = await ensureDevice(request, String(user._id))
+      if (deviceCookie) setDeviceCookie(response, deviceCookie)
       return response
     } catch {
       // Avoid leaving an account that the caller believes failed to register.

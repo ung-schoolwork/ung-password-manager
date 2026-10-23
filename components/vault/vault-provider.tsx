@@ -23,7 +23,10 @@ import {
   readLocalVault,
   type LocalVaultSource,
 } from "@/lib/vault/local-migration.client"
-import { VaultService } from "@/lib/vault/service.client"
+import {
+  CredentialConflictError,
+  VaultService,
+} from "@/lib/vault/service.client"
 import type { Credential, CredentialDraft } from "@/lib/vault/types"
 
 type VaultStatus =
@@ -47,7 +50,8 @@ interface VaultContextValue {
   addCredential(draft: CredentialDraft): Promise<Credential>
   updateCredential(
     id: string,
-    patch: Partial<CredentialDraft>
+    patch: Partial<CredentialDraft>,
+    expectedUpdatedAt?: string
   ): Promise<Credential>
   removeCredential(id: string): Promise<void>
 }
@@ -309,13 +313,26 @@ function ApprovedVaultProvider({
   )
 
   const updateCredential = useCallback(
-    async (id: string, patch: Partial<CredentialDraft>) => {
+    async (
+      id: string,
+      patch: Partial<CredentialDraft>,
+      expectedUpdatedAt?: string
+    ) => {
       const service = requireService()
       setBusy(true)
       try {
-        const credential = await service.updateCredential(id, patch)
+        const credential = await service.updateCredential(
+          id,
+          patch,
+          expectedUpdatedAt
+        )
         refreshCredentials(service)
         return credential
+      } catch (error) {
+        // The service now holds the newer vault; show it in the list too.
+        if (error instanceof CredentialConflictError)
+          refreshCredentials(service)
+        throw error
       } finally {
         setBusy(false)
       }

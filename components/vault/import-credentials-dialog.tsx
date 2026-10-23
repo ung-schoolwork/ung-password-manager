@@ -36,9 +36,7 @@ export function ImportCredentialsDialog({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<ImportStep>("select")
-  const [parseResult, setParseResult] = useState<ImportParseResult | null>(
-    null
-  )
+  const [parseResult, setParseResult] = useState<ImportParseResult | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
 
@@ -256,8 +254,8 @@ export function ImportCredentialsDialog({
               <DialogTitle>Import complete</DialogTitle>
               <DialogDescription>
                 {outcome.succeeded}{" "}
-                {outcome.succeeded === 1 ? "credential" : "credentials"}{" "}
-                added to your vault.
+                {outcome.succeeded === 1 ? "credential" : "credentials"} added
+                to your vault.
                 {outcome.failed > 0
                   ? ` ${outcome.failed} could not be saved.`
                   : ""}
