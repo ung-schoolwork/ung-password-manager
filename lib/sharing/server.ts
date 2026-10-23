@@ -6,6 +6,16 @@ import type { CredentialDraft } from "@/lib/vault/types"
 const CIPHER_ALGORITHM = "aes-256-gcm"
 const IV_BYTES = 12
 
+// Known trade-off (SCRUM-21): credential sharing is NOT end-to-end encrypted
+// like the rest of the vault. The browser sends the credential to the server
+// in plaintext over HTTPS, and the server encrypts it at rest with a single
+// shared symmetric key (SHARE_ENCRYPTION_KEY) before storing it. Anyone with
+// that key, or server-side code execution, can decrypt any pending share.
+// This was accepted for this sprint to ship credential sharing on schedule.
+// A true end-to-end design would need per-account asymmetric keypairs so the
+// browser can encrypt directly to the recipient's public key; that is
+// tracked as follow-up work, not part of this story.
+
 export class RecipientNotFoundError extends Error {
   constructor() {
     super("No account was found with that email.")
