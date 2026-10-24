@@ -8,8 +8,15 @@ import {
   VaultConflictError,
 } from "@/lib/vault/remote"
 
-export async function fetchVaultRevision(): Promise<string | null> {
-  const value = await vaultRequest("GET", undefined, "/api/vault/revision")
+export async function fetchVaultRevision(
+  signal?: AbortSignal
+): Promise<string | null> {
+  const value = await vaultRequest(
+    "GET",
+    undefined,
+    "/api/vault/revision",
+    signal
+  )
   if (value.revision === null) return null
   if (!isVaultRevision(value.revision))
     throw new Error("Your vault could not be checked for changes.")
@@ -19,7 +26,8 @@ export async function fetchVaultRevision(): Promise<string | null> {
 async function vaultRequest(
   method: "GET" | "PUT",
   body?: string,
-  path = "/api/vault"
+  path = "/api/vault",
+  signal?: AbortSignal
 ) {
   const message =
     method === "GET"
@@ -33,8 +41,10 @@ async function vaultRequest(
       cache: "no-store",
       headers: body ? { "Content-Type": "application/json" } : undefined,
       body,
+      signal,
     })
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error
     throw new Error(message)
   }
   if (response.status === 403) throw new DeviceNotApprovedError()
