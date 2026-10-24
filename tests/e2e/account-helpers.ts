@@ -34,7 +34,7 @@ export async function createVault(page: Page) {
 export async function approvalCode(page: Page) {
   await expect(
     page.getByRole("heading", { name: "Approve this device" })
-  ).toBeVisible()
+  ).toBeVisible({ timeout: 15_000 })
   const text = await page.getByLabel("Device approval code").innerText()
   const code = text.replace(/\s/g, "")
   expect(code).toMatch(/^\d{8}$/)

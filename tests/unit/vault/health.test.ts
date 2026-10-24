@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test"
 
 import { analyzeCredentialsHealth } from "../../../lib/vault/health"
+import {
+  DEFAULT_PASSWORD_OPTIONS,
+  generatePassword,
+} from "../../../lib/password-generator"
 import type { Credential } from "../../../lib/vault/types"
 
 function credential(id: string, patch: Partial<Credential> = {}): Credential {
@@ -68,7 +72,81 @@ describe("analyzeCredentialsHealth", () => {
     ).toBe(true)
   })
 
-  it("uses password change time rather than credential edit time for older passwords", async () => {
+  it("flags a common composition-rule password through the blocklist", async () => {
+    const [report] = await analyzeCredentialsHealth([
+      credential("blocklisted", { password: "Password1!" }),
+    ])
+
+    expect(
+      report.warnings.some(
+        (warning) =>
+          warning.type === "Weak" &&
+          warning.explanation.includes("commonly used")
+      )
+    ).toBe(true)
+  })
+
+  it("flags repeated characters and simple sequences regardless of length", async () => {
+    for (const [password, explanation] of [
+      [
+        "aaaaaaaaaaaaaaaa",
+        "repeats the same character",
+      ],
+      [
+        "1234567890123456",
+        "simple character sequence",
+      ],
+      [
+        "zyxwvutsrqponmlk",
+        "simple character sequence",
+      ],
+      ["aaa", "repeats the same character"],
+    ]) {
+      const [report] = await analyzeCredentialsHealth([
+        credential("weak", { password }),
+      ])
+
+      expect(
+        report.warnings.some(
+          (warning) =>
+            warning.type === "Weak" &&
+            warning.explanation.includes(explanation)
+        )
+      ).toBe(true)
+    }
+  })
+
+  it("does not flag generated passwords or passphrases", async () => {
+    let index = 0
+    const generatedPassword = generatePassword(
+      { ...DEFAULT_PASSWORD_OPTIONS, length: 12 },
+      (upperExclusive) => (index++ * 7 + 3) % upperExclusive
+    )
+    const passphrase = "correct horse battery staple"
+    const reports = await analyzeCredentialsHealth([
+      credential("generated", { password: generatedPassword }),
+      credential("passphrase", {
+        accountName: "Passphrase account",
+        password: passphrase,
+      }),
+    ])
+
+    for (const report of reports) {
+      expect(report.warnings).toEqual([])
+    }
+  })
+
+  it("does not apply composition rules to word-and-number passwords", async () => {
+    const [report] = await analyzeCredentialsHealth([
+      credential("word-number", { password: "dragon99" }),
+    ])
+
+    expect(
+      report.warnings.some((warning) => warning.type === "Weak")
+    ).toBe(false)
+  })
+
+  it("does not recommend changing a password based only on its age", async () => {
     const oldPasswordDate = new Date(
       Date.now() - 100 * 24 * 60 * 60 * 1000
     ).toISOString()
@@ -76,9 +154,7 @@ describe("analyzeCredentialsHealth", () => {
       credential("older", { passwordUpdatedAt: oldPasswordDate }),
     ])
 
-    expect(report.warnings.some((warning) => warning.type === "Overdue")).toBe(
-      true
-    )
+    expect(report.warnings).toEqual([])
   })
 
   it("returns no warnings for a recent unique password", async () => {

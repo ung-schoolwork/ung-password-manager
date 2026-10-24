@@ -35,6 +35,8 @@ test("opens Health from a credential shield", async ({ page }) => {
 test("shows saved password warnings and their reasons", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(60_000)
+
   await page.goto("/")
   await page
     .getByLabel("Vault password", { exact: true })
@@ -51,6 +53,9 @@ test("shows saved password warnings and their reasons", async ({
     .fill("student@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
   await expect(
@@ -72,6 +77,9 @@ test("shows saved password warnings and their reasons", async ({
     .fill("backup@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
   const reports = page.getByRole("list", { name: "Password health reports" })

@@ -11,7 +11,7 @@ import type { Credential } from "@/lib/vault/types"
 // One warning: a short category label (the UI prints it in bold) plus a
 // human-readable explanation.
 export interface PasswordWarning {
-  type: "Weak" | "Short" | "Reused" | "Overdue"
+  type: "Weak" | "Short" | "Reused"
   explanation: string
 }
 
@@ -23,8 +23,7 @@ export interface CredentialHealthReport extends Credential {
 
 // --- Tunable thresholds -----------------------------------------------------
 const MIN_LENGTH = 8 // under this -> "Weak"
-const RECOMMENDED_LENGTH = 15 // 8-14 chars -> "Short"
-const DAYS_OVERDUE = 90 // unchanged for this long -> "Overdue"
+const RECOMMENDED_LENGTH = 12 // 8-11 chars -> "Short"
 
 // Maps risk labels to numbers so they can be compared when sorting.
 const RISK_PRIORITY: Record<string, number> = {
@@ -33,11 +32,12 @@ const RISK_PRIORITY: Record<string, number> = {
   low: 1,
 }
 
-// Small hardcoded blocklist. Array + .includes() is a linear scan, which is
-// fine at 15 entries. NOTE: exact (case-insensitive) matches only, so
-// "Password1!" would NOT be caught by this list.
+// Small on-device denylist, not a comprehensive breached-password corpus.
+// Exact case-insensitive matches avoid sending saved passwords to a service.
 const COMMON_PASSWORDS = [
   "password",
+  "password1",
+  "password1!",
   "123456",
   "12345678",
   "qwerty",
@@ -53,6 +53,36 @@ const COMMON_PASSWORDS = [
   "sunshine",
   "princess",
 ]
+
+function isRepeatedCharacter(password: string): boolean {
+  const characters = [...password]
+  return (
+    characters.length > 0 &&
+    characters.every((character) => character === characters[0])
+  )
+}
+
+function isSimpleSequence(password: string): boolean {
+  const normalized = password.toLowerCase()
+  const alphabet = /^\d+$/.test(normalized)
+    ? "0123456789"
+    : /^[a-z]+$/.test(normalized)
+      ? "abcdefghijklmnopqrstuvwxyz"
+      : null
+
+  if (!alphabet || normalized.length < 3) return false
+
+  const indexes = [...normalized].map((character) => alphabet.indexOf(character))
+  const followsStep = (step: 1 | -1) =>
+    indexes.every(
+      (index, position) =>
+        position === 0 ||
+        index ===
+          (indexes[position - 1] + step + alphabet.length) % alphabet.length
+    )
+
+  return followsStep(1) || followsStep(-1)
+}
 
 export function analyzeCredentialsHealth(
   credentials: Credential[]
@@ -70,14 +100,6 @@ export function analyzeCredentialsHealth(
     group.push(credential)
     passwordGroups.set(credential.password, group)
   }
-
-  // --- The "overdue" cutoff -------------------------------------------------
-  // Computed once outside the loop so every credential is compared against
-  // the same moment. setDate() handles month/year rollover automatically.
-  // NOTE: uses the current time, so results can change between calls even if
-  // `credentials` hasn't (relevant because the component memoizes this).
-  const ninetyDaysAgo = new Date()
-  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - DAYS_OVERDUE)
 
   return (
     credentials
@@ -111,27 +133,21 @@ export function analyzeCredentialsHealth(
           })
         }
 
-        // --- Check 3: simple word+number pattern ------------------------------
-        // Flags letters-then-digits ("dragon99") or digits-then-letters
-        // ("123abc"). Regex breakdown:
-        //   ^ ... $   must match the whole string
-        //   [a-z]+    one or more letters (the `i` flag ignores case)
-        //   [0-9]+    one or more digits
-        // The length guard means a long passphrase like
-        // "correcthorsebatterystaple1" is not penalized.
-        const isSimplePattern =
-          pwd.length < RECOMMENDED_LENGTH &&
-          (/^[a-z]+[0-9]+$/i.test(pwd) || /^[0-9]+[a-z]+$/i.test(pwd))
-
-        if (isSimplePattern) {
+        if (isRepeatedCharacter(pwd)) {
           warnings.push({
             type: "Weak",
             explanation:
-              "Follows an easily guessed predictable word-and-number combination.",
+              "This password repeats the same character and is easy to guess.",
+          })
+        } else if (isSimpleSequence(pwd)) {
+          warnings.push({
+            type: "Weak",
+            explanation:
+              "This password follows a simple character sequence and is easy to guess.",
           })
         }
 
-        // --- Check 4: reuse ---------------------------------------------------
+        // --- Check 3: reuse ---------------------------------------------------
         // Look up everyone sharing this password, then remove this credential
         // itself. If anyone is left, the password is reused.
         const otherAccounts = (passwordGroups.get(pwd) ?? []).filter(
@@ -145,23 +161,6 @@ export function analyzeCredentialsHealth(
             explanation: `This password is also saved for: ${otherAccounts
               .map((other) => `${other.accountName} (${other.siteOrApp})`)
               .join(", ")}. Reusing a password puts multiple accounts at risk.`,
-          })
-        }
-
-        // --- Check 5: age -----------------------------------------------------
-        // Fallback chain: when the password last changed, else when the record
-        // was last edited, else when it was created. Date objects compare with
-        // `<` because they coerce to timestamps.
-        // NOTE: if all three fields are missing/malformed, this is an Invalid
-        // Date, and `Invalid Date < ninetyDaysAgo` is false, so the check
-        // silently passes.
-        const lastUpdated = new Date(
-          cred.passwordUpdatedAt || cred.updatedAt || cred.createdAt
-        )
-        if (lastUpdated < ninetyDaysAgo) {
-          warnings.push({
-            type: "Overdue",
-            explanation: `This password has not changed in over ${DAYS_OVERDUE} days. Review whether it needs updating.`,
           })
         }
 
