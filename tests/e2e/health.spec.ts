@@ -32,6 +32,50 @@ test("opens Health from a credential shield", async ({ page }) => {
   ).toBeVisible()
 })
 
+test("assigns risk to an existing credential without adding one", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page
+    .getByLabel("Vault password", { exact: true })
+    .fill("correct horse battery staple")
+  await page
+    .getByLabel("Confirm vault password")
+    .fill("correct horse battery staple")
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+
+  await page.getByRole("button", { name: "Close" }).click()
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+  await expect(page.getByLabel("Account credential")).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled()
+  await expect(
+    page.getByRole("list", { name: "Password health reports" })
+  ).toHaveCount(0)
+
+  await page.getByRole("link", { name: "Vault" }).click()
+  await page.getByLabel("Account label").fill("University email")
+  await page.getByLabel("Website or app").fill("mail.example.edu")
+  await page
+    .getByRole("textbox", { name: "Username" })
+    .fill("student@example.edu")
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("private-password-123")
+  await page.getByRole("button", { name: "Save credential" }).click()
+
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+  await page.getByLabel("Account credential").selectOption({
+    label: "University email (mail.example.edu)",
+  })
+  await page.getByLabel("Risk level").selectOption("high")
+  await page.getByRole("button", { name: "Save" }).click()
+
+  const reports = page.getByRole("list", { name: "Password health reports" })
+  await expect(reports.getByRole("listitem")).toHaveCount(1)
+  await expect(reports.getByText("high", { exact: true })).toBeVisible()
+  await expect(page.getByLabel("Account credential")).toHaveValue("")
+})
+
 test("shows saved password warnings and their reasons", async ({
   page,
 }, testInfo) => {

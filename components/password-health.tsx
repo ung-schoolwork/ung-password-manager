@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { AlertTriangle, KeyRound, Plus } from "lucide-react"
+import { AlertTriangle, KeyRound, Tag } from "lucide-react"
 
 import { useVault } from "@/components/vault/vault-provider"
 import { analyzeCredentialsHealth } from "@/lib/vault/health"
@@ -14,14 +14,13 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { RiskLevel } from "@/lib/vault/types"
 import { HealthShield, type HealthStatus } from "@/components/vault/health-shield"
 
 export function PasswordHealth() {
-  const { credentials, addCredential, updateCredential } = useVault()
-  const [accountName, setAccountName] = useState("")
+  const { credentials, updateCredential } = useVault()
+  const [credentialId, setCredentialId] = useState("")
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -41,44 +40,24 @@ export function PasswordHealth() {
     e.preventDefault()
     setFormError(null)
 
-    if (!accountName.trim()) {
-      setFormError("Enter an account name.")
+    const existing = credentials.find(
+      (credential) => credential.id === credentialId
+    )
+    if (!existing) {
+      setFormError("Select an existing credential.")
       return
     }
 
-    const existing = credentials.find(
-      (c) => c.accountName.toLowerCase() === accountName.trim().toLowerCase()
-    )
-
-    if (existing) {
-      const confirmed = window.confirm(
-        `An account named "${existing.accountName}" already exists. Do you want to overwrite its risk rating?`
-      )
-      if (!confirmed) return
-
-      try {
-        await updateCredential(existing.id, { riskLevel })
-        setAccountName("")
-        setRiskLevel("medium")
-        return
-      } catch {
-        setFormError("Could not update existing credential.")
-        return
-      }
-    }
-
     try {
-      await addCredential({
-        accountName: accountName.trim(),
-        siteOrApp: "example.com",
-        username: "user@example.com",
-        password: "password123",
-        riskLevel,
-      })
-      setAccountName("")
+      await updateCredential(existing.id, { riskLevel }, existing.updatedAt)
+      setCredentialId("")
       setRiskLevel("medium")
-    } catch {
-      setFormError("Could not save credential.")
+    } catch (error) {
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : "Could not update existing credential."
+      )
     }
   }
 
@@ -220,9 +199,10 @@ export function PasswordHealth() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Add Account Credential</CardTitle>
+          <CardTitle className="text-base">Tag Existing Credential</CardTitle>
           <CardDescription className="text-xs">
-            Tag an account by risk level to prioritize its security warnings.
+            Select a saved account and set its risk level to prioritize its
+            security warnings.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -231,13 +211,25 @@ export function PasswordHealth() {
             className="flex flex-col gap-4 sm:flex-row sm:items-end"
           >
             <div className="flex-1 space-y-1.5">
-              <Label htmlFor="quick-account-name">Account name</Label>
-              <Input
-                id="quick-account-name"
-                placeholder="e.g., Student Database"
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-              />
+              <Label htmlFor="quick-credential">Account credential</Label>
+              <select
+                id="quick-credential"
+                className="h-7 w-full rounded-md border border-input bg-input/20 px-2 text-xs outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+                value={credentialId}
+                disabled={credentials.length === 0}
+                onChange={(e) => setCredentialId(e.target.value)}
+              >
+                <option value="" disabled>
+                  {credentials.length === 0
+                    ? "No credentials in vault"
+                    : "Select an account"}
+                </option>
+                {credentials.map((credential) => (
+                  <option key={credential.id} value={credential.id}>
+                    {credential.accountName} ({credential.siteOrApp})
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="w-full sm:w-48 space-y-1.5">
               <Label htmlFor="quick-risk-level">Risk level</Label>
@@ -252,11 +244,20 @@ export function PasswordHealth() {
                 <option value="high">High Risk</option>
               </select>
             </div>
-            <Button type="submit" className="h-7 px-4">
-              <Plus className="size-3.5" aria-hidden="true" />
+            <Button
+              type="submit"
+              className="h-7 px-4"
+              disabled={!credentialId || credentials.length === 0}
+            >
+              <Tag className="size-3.5" aria-hidden="true" />
               Save
             </Button>
           </form>
+          {credentials.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Add a credential in the Vault before assigning a risk level.
+            </p>
+          )}
           {formError && (
             <p className="mt-2 text-xs text-destructive">{formError}</p>
           )}

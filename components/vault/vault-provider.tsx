@@ -237,6 +237,16 @@ function ApprovedVaultProvider({
     setCredentials(service.listCredentials())
   }, [])
 
+  const syncVaultRevision = useCallback(
+    async (service: VaultService) => {
+      const queryKey = ["vault-revision", accountId]
+      await queryClient.cancelQueries({ queryKey })
+      const revision = service.knownRevision()
+      if (revision !== null) queryClient.setQueryData(queryKey, revision)
+    },
+    [accountId, queryClient]
+  )
+
   const createVault = useCallback(
     async (passphrase: string) => {
       const service = requireService()
@@ -304,12 +314,13 @@ function ApprovedVaultProvider({
       try {
         const credential = await service.saveCredential(draft)
         refreshCredentials(service)
+        await syncVaultRevision(service)
         return credential
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService]
+    [refreshCredentials, requireService, syncVaultRevision]
   )
 
   const updateCredential = useCallback(
