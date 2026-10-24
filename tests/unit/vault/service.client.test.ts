@@ -363,7 +363,7 @@ describe("VaultService", () => {
     expect(service.listCredentials()).toHaveLength(1)
   })
 
-  it("rejects a save built on data that a refresh just replaced", async () => {
+  it("retries adding a credential when a refresh replaces its snapshot", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
     await service.createVault(passphrase)
@@ -373,9 +373,28 @@ describe("VaultService", () => {
     const saving = service.saveCredential(validDraft)
     await refreshing
 
-    await expect(saving).rejects.toThrow("Your vault changed")
-    expect(service.listCredentials()).toEqual([migratedCredential])
-    expect(repository.saveCalls).toBe(1)
+    await expect(saving).resolves.toEqual(
+      expect.objectContaining({ id: "credential-1", ...validDraft })
+    )
+    expect(service.listCredentials()).toEqual([
+      expect.objectContaining({ id: "credential-1", ...validDraft }),
+      migratedCredential,
+    ])
+    expect(repository.saveCalls).toBe(2)
+  })
+
+  it("does not rebase a credential add after the server rejects a stale write", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+    repository.save = async () => {
+      throw new VaultConflictError()
+    }
+
+    await expect(service.saveCredential(validDraft)).rejects.toThrow(
+      "Your vault changed"
+    )
+    expect(service.listCredentials()).toEqual([])
   })
 
   describe("editing while another device saves", () => {

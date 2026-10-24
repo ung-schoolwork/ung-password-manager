@@ -20,6 +20,50 @@ function credential(id: string, patch: Partial<Credential> = {}): Credential {
 }
 
 describe("analyzeCredentialsHealth", () => {
+  it("sorts credentials by high, medium, then low risk", async () => {
+    const reports = await analyzeCredentialsHealth([
+      credential("low", { riskLevel: "low" }),
+      credential("high", { riskLevel: "high" }),
+      credential("medium", { riskLevel: "medium" }),
+    ])
+
+    expect(reports.map((report) => report.id)).toEqual([
+      "high",
+      "medium",
+      "low",
+    ])
+  })
+
+  it("treats credentials without a risk tag as low risk", async () => {
+    const reports = await analyzeCredentialsHealth([
+      credential("untagged"),
+      credential("tagged-low", { riskLevel: "low" }),
+    ])
+
+    expect(reports.map((report) => report.id)).toEqual([
+      "untagged",
+      "tagged-low",
+    ])
+    expect(reports[0].riskLevel).toBe("low")
+  })
+
+  it("uses warning count as a tiebreaker and preserves order for exact ties", async () => {
+    const reports = await analyzeCredentialsHealth([
+      credential("first-tie", { riskLevel: "medium" }),
+      credential("more-warnings", {
+        riskLevel: "medium",
+        password: "password",
+      }),
+      credential("second-tie", { riskLevel: "medium" }),
+    ])
+
+    expect(reports.map((report) => report.id)).toEqual([
+      "more-warnings",
+      "first-tie",
+      "second-tie",
+    ])
+  })
+
   it("warns about reuse even when saved accounts have the same label", async () => {
     const reports = await analyzeCredentialsHealth([
       credential("first"),
