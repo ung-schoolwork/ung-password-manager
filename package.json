@@ -43,5 +43,8 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5"
+  },
+  "patchedDependencies": {
+    "bson@7.3.3": "patches/bson@7.3.3.patch"
   }
 }
