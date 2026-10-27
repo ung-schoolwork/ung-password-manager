@@ -1,7 +1,7 @@
 "use client"
 
 import { Check, Copy } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 
@@ -13,8 +13,9 @@ const FIELD_LABELS: Record<CopyField, string> = {
 }
 
 // How long a copied credential stays on the clipboard before it is
-// cleared automatically (SCRUM-24).
-const CLEAR_AFTER_MS = 15_000
+// cleared automatically (SCRUM-24). Overridable so e2e tests don't have
+// to wait out the real delay.
+const CLEAR_AFTER_MS = Number(process.env.NEXT_PUBLIC_CLIPBOARD_CLEAR_MS) || 15_000
 
 export function CredentialCopyActions({
   username,
@@ -40,10 +41,6 @@ export function CredentialCopyActions({
       pendingClear.current = null
     }
   }, [])
-
-  // If the component unmounts (e.g. the credential is deleted) while a
-  // clear is still pending, stop the timer without touching state.
-  useEffect(() => cancelPendingClear, [cancelPendingClear])
 
   async function copy(value: string, field: CopyField) {
     try {
