@@ -179,7 +179,7 @@ function ApprovedVaultProvider({
   // Pick up changes made on other approved devices while the vault is open.
   const revision = useQuery({
     queryKey: ["vault-revision", accountId],
-    queryFn: ({ signal }) => fetchVaultRevision(signal),
+    queryFn: fetchVaultRevision,
     enabled: status === "unlocked",
     retry: false,
     refetchInterval: VAULT_POLL_INTERVAL_MS,
@@ -237,16 +237,6 @@ function ApprovedVaultProvider({
     setCredentials(service.listCredentials())
   }, [])
 
-  const syncVaultRevision = useCallback(
-    async (service: VaultService) => {
-      if (serviceRef.current !== service) return
-      const queryKey = ["vault-revision", accountId]
-      await queryClient.cancelQueries({ queryKey })
-      queryClient.setQueryData(queryKey, service.knownRevision())
-    },
-    [accountId, queryClient]
-  )
-
   const createVault = useCallback(
     async (passphrase: string) => {
       const service = requireService()
@@ -255,13 +245,12 @@ function ApprovedVaultProvider({
         await service.createVault(passphrase)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
-        await syncVaultRevision(service)
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService, syncVaultRevision]
+    [refreshCredentials, requireService]
   )
 
   const migrateVault = useCallback(
@@ -279,13 +268,12 @@ function ApprovedVaultProvider({
         await service.migrateVault(passphrase, envelope)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
-        await syncVaultRevision(service)
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [accountId, refreshCredentials, requireService, syncVaultRevision]
+    [accountId, refreshCredentials, requireService]
   )
   const unlockVault = useCallback(
     async (passphrase: string) => {
@@ -295,13 +283,12 @@ function ApprovedVaultProvider({
         await service.unlockVault(passphrase)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
-        await syncVaultRevision(service)
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService, syncVaultRevision]
+    [refreshCredentials, requireService]
   )
 
   const lockVault = useCallback(() => {
@@ -317,13 +304,12 @@ function ApprovedVaultProvider({
       try {
         const credential = await service.saveCredential(draft)
         refreshCredentials(service)
-        await syncVaultRevision(service)
         return credential
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService, syncVaultRevision]
+    [refreshCredentials, requireService]
   )
 
   const updateCredential = useCallback(
@@ -341,20 +327,17 @@ function ApprovedVaultProvider({
           expectedUpdatedAt
         )
         refreshCredentials(service)
-        await syncVaultRevision(service)
         return credential
       } catch (error) {
         // The service now holds the newer vault; show it in the list too.
-        if (error instanceof CredentialConflictError) {
+        if (error instanceof CredentialConflictError)
           refreshCredentials(service)
-          await syncVaultRevision(service)
-        }
         throw error
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService, syncVaultRevision]
+    [refreshCredentials, requireService]
   )
 
   const removeCredential = useCallback(
@@ -364,12 +347,11 @@ function ApprovedVaultProvider({
       try {
         await service.removeCredential(id)
         refreshCredentials(service)
-        await syncVaultRevision(service)
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService, syncVaultRevision]
+    [refreshCredentials, requireService]
   )
 
   return (

@@ -18,8 +18,12 @@ test("opens Health from a credential shield", async ({ page }) => {
   await page.getByRole("button", { name: "Create encrypted vault" }).click()
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
-  await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
-  await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+  await page
+    .getByRole("textbox", { name: "Username" })
+    .fill("student@example.edu")
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("private-password-123")
   await page.getByRole("button", { name: "Save credential" }).click()
 
   await page
@@ -35,8 +39,6 @@ test("opens Health from a credential shield", async ({ page }) => {
 test("shows saved password warnings and their reasons", async ({
   page,
 }, testInfo) => {
-  test.setTimeout(60_000)
-
   await page.goto("/")
   await page
     .getByLabel("Vault password", { exact: true })

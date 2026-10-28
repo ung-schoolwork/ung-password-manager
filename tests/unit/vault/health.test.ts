@@ -86,20 +86,18 @@ describe("analyzeCredentialsHealth", () => {
     ).toBe(true)
   })
 
-  it("flags repeated characters and simple sequences regardless of length", async () => {
+  it("flags repeated characters, sequences and repeated patterns", async () => {
     for (const [password, explanation] of [
-      [
-        "aaaaaaaaaaaaaaaa",
-        "repeats the same character",
-      ],
-      [
-        "1234567890123456",
-        "simple character sequence",
-      ],
-      [
-        "zyxwvutsrqponmlk",
-        "simple character sequence",
-      ],
+      ["aaaaaaaaaaaaaaaa", "repeats the same character"],
+      ["1234567890123456", "simple character sequence"],
+      ["zyxwvutsrqponmlk", "simple character sequence"],
+      ["abcabcabcabcabc", "repeats the same short pattern"],
+      ["passwordpassword", "repeats the same short pattern"],
+      ["letmeinletmein", "repeats the same short pattern"],
+      ["jackjackjack", "repeats the same short pattern"],
+      ["AaAaAaAaAaAaAaAa", "repeats the same short pattern"],
+      ["aaaaaaaaaaaaaaa!", "repeats the same character"],
+      ["1234567890123456!", "simple character sequence"],
       ["aaa", "repeats the same character"],
     ]) {
       const [report] = await analyzeCredentialsHealth([
@@ -109,17 +107,30 @@ describe("analyzeCredentialsHealth", () => {
       expect(
         report.warnings.some(
           (warning) =>
-            warning.type === "Weak" &&
-            warning.explanation.includes(explanation)
+            warning.type === "Weak" && warning.explanation.includes(explanation)
         )
       ).toBe(true)
     }
   })
 
+  it("flags word-and-number combinations like dragon99", async () => {
+    const [report] = await analyzeCredentialsHealth([
+      credential("word-number", { password: "dragon99" }),
+    ])
+
+    expect(
+      report.warnings.some(
+        (warning) =>
+          warning.type === "Weak" &&
+          warning.explanation.includes("word-and-number")
+      )
+    ).toBe(true)
+  })
+
   it("does not flag generated passwords or passphrases", async () => {
     let index = 0
     const generatedPassword = generatePassword(
-      { ...DEFAULT_PASSWORD_OPTIONS, length: 12 },
+      DEFAULT_PASSWORD_OPTIONS,
       (upperExclusive) => (index++ * 7 + 3) % upperExclusive
     )
     const passphrase = "correct horse battery staple"
@@ -129,24 +140,19 @@ describe("analyzeCredentialsHealth", () => {
         accountName: "Passphrase account",
         password: passphrase,
       }),
+      credential("strong", { password: "Tr0ub4dor&3xK9!wQ" }),
     ])
 
     for (const report of reports) {
-      expect(report.warnings).toEqual([])
+      expect(
+        report.warnings.some(
+          (warning) => warning.type === "Weak" || warning.type === "Short"
+        )
+      ).toBe(false)
     }
   })
 
-  it("does not apply composition rules to word-and-number passwords", async () => {
-    const [report] = await analyzeCredentialsHealth([
-      credential("word-number", { password: "dragon99" }),
-    ])
-
-    expect(
-      report.warnings.some((warning) => warning.type === "Weak")
-    ).toBe(false)
-  })
-
-  it("does not recommend changing a password based only on its age", async () => {
+  it("uses password change time rather than credential edit time for older passwords", async () => {
     const oldPasswordDate = new Date(
       Date.now() - 100 * 24 * 60 * 60 * 1000
     ).toISOString()
@@ -154,7 +160,9 @@ describe("analyzeCredentialsHealth", () => {
       credential("older", { passwordUpdatedAt: oldPasswordDate }),
     ])
 
-    expect(report.warnings).toEqual([])
+    expect(report.warnings.some((warning) => warning.type === "Overdue")).toBe(
+      true
+    )
   })
 
   it("returns no warnings for a recent unique password", async () => {
