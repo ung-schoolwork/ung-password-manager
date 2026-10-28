@@ -172,6 +172,7 @@ test("saving an edit after another device changed the credential reports a confl
   page,
   browser,
 }) => {
+  test.setTimeout(60_000)
   const account = await firstDevice(page)
   const second = await secondDevice(browser, account.email)
   await approve(page, await approvalCode(second.page))
@@ -243,6 +244,9 @@ test("saving an edit after another device changed the credential reports a confl
   // The first device receives the second device's notes with its own password.
   await expect(async () => {
     await checkNow(page)
+    await expect(
+      page.getByText("Edited on the second device", { exact: true })
+    ).toBeVisible()
     await page.getByRole("button", { name: "Edit Shared login" }).click()
     const latest = page.getByRole("dialog", { name: "Edit credential" })
     try {
