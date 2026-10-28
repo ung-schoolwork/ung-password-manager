@@ -45,6 +45,7 @@ async function unlock(page: Page) {
 
 async function checkNow(page: Page) {
   // Returning to the tab asks for the latest vault right away.
+  await page.bringToFront()
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange"))
   )

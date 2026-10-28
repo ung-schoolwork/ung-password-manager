@@ -1,6 +1,13 @@
 "use client"
 
-import { useMemo, useState, type FormEvent } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 import { AlertTriangle, KeyRound, Plus } from "lucide-react"
 
 import { useVault } from "@/components/vault/vault-provider"
@@ -16,14 +23,47 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import type { RiskLevel } from "@/lib/vault/types"
-import { HealthShield, type HealthStatus } from "@/components/vault/health-shield"
+import type { Credential, RiskLevel } from "@/lib/vault/types"
+import {
+  HealthShield,
+  type HealthStatus,
+} from "@/components/vault/health-shield"
 
 export function PasswordHealth() {
-  const { credentials, addCredential, updateCredential } = useVault()
+  const { credentials, updateCredential, busy } = useVault()
   const [accountName, setAccountName] = useState("")
+  const [selectedCredentialId, setSelectedCredentialId] = useState<
+    string | null
+  >(null)
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1)
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
+  const activeOptionRef = useRef<HTMLLIElement>(null)
+  // A save can finish after the user already picked another account. Each
+  // change to the selection bumps this token, so a save only clears the form
+  // when the selection it saved is still the one on screen.
+  const selectionTokenRef = useRef(0)
+
+  function changeSelection(id: string | null) {
+    selectionTokenRef.current += 1
+    setSelectedCredentialId(id)
+  }
+
+  const emptyVault = credentials.length === 0
+  const query = accountName.trim().toLowerCase()
+  const matchingCredentials = credentials.filter(
+    (credential) =>
+      query.length > 0 &&
+      (credential.accountName.toLowerCase().includes(query) ||
+        credential.siteOrApp.toLowerCase().includes(query))
+  )
+
+  // The highlight has to stay visible when the list is longer than its box.
+  useEffect(() => {
+    if (!suggestionsOpen || activeSuggestionIndex < 0) return
+    activeOptionRef.current?.scrollIntoView({ block: "nearest" })
+  }, [activeSuggestionIndex, suggestionsOpen])
 
   const auditedAccounts = useMemo(
     () => analyzeCredentialsHealth(credentials),
@@ -41,44 +81,69 @@ export function PasswordHealth() {
     e.preventDefault()
     setFormError(null)
 
-    if (!accountName.trim()) {
-      setFormError("Enter an account name.")
+    const selectedCredential = credentials.find(
+      (credential) => credential.id === selectedCredentialId
+    )
+    if (!selectedCredential) {
+      setFormError("Select a saved account from the suggestions.")
       return
     }
 
-    const existing = credentials.find(
-      (c) => c.accountName.toLowerCase() === accountName.trim().toLowerCase()
-    )
-
-    if (existing) {
-      const confirmed = window.confirm(
-        `An account named "${existing.accountName}" already exists. Do you want to overwrite its risk rating?`
+    const savedToken = selectionTokenRef.current
+    try {
+      await updateCredential(
+        selectedCredential.id,
+        { riskLevel },
+        selectedCredential.updatedAt
       )
-      if (!confirmed) return
-
-      try {
-        await updateCredential(existing.id, { riskLevel })
+      // Clearing the form is only right while the saved account is still the
+      // one on screen; a later pick must survive this save finishing.
+      if (selectionTokenRef.current === savedToken) {
         setAccountName("")
-        setRiskLevel("medium")
-        return
-      } catch {
-        setFormError("Could not update existing credential.")
-        return
+        changeSelection(null)
       }
+    } catch (caught) {
+      setFormError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not update existing credential."
+      )
+    }
+  }
+
+  function selectCredential(credential: Credential) {
+    setAccountName(credential.accountName)
+    changeSelection(credential.id)
+    // Start from the tag the account already has, so saving keeps it.
+    setRiskLevel(credential.riskLevel ?? "low")
+    setSuggestionsOpen(false)
+    setActiveSuggestionIndex(-1)
+    setFormError(null)
+  }
+
+  function handleAccountKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setSuggestionsOpen(false)
+      return
     }
 
-    try {
-      await addCredential({
-        accountName: accountName.trim(),
-        siteOrApp: "example.com",
-        username: "user@example.com",
-        password: "password123",
-        riskLevel,
-      })
-      setAccountName("")
-      setRiskLevel("medium")
-    } catch {
-      setFormError("Could not save credential.")
+    if (event.key === "ArrowDown" && matchingCredentials.length > 0) {
+      event.preventDefault()
+      setSuggestionsOpen(true)
+      setActiveSuggestionIndex((index) =>
+        Math.min(index + 1, matchingCredentials.length - 1)
+      )
+    } else if (event.key === "ArrowUp" && matchingCredentials.length > 0) {
+      event.preventDefault()
+      setSuggestionsOpen(true)
+      setActiveSuggestionIndex((index) =>
+        index < 0 ? matchingCredentials.length - 1 : Math.max(index - 1, 0)
+      )
+    } else if (event.key === "Enter" && suggestionsOpen) {
+      const credential = matchingCredentials[activeSuggestionIndex]
+      if (!credential) return
+      event.preventDefault()
+      selectCredential(credential)
     }
   }
 
@@ -147,9 +212,12 @@ export function PasswordHealth() {
                     key={acc.id}
                     className={cn(
                       "rounded-lg border p-4 text-card-foreground shadow-sm transition-colors",
-                      status === "danger" && "border-l-4 border-l-destructive bg-red-500/5",
-                      status === "warning" && "border-l-4 border-l-yellow-500 bg-yellow-500/5",
-                      status === "success" && "border-l-4 border-l-emerald-500 bg-emerald-500/5"
+                      status === "danger" &&
+                        "border-l-4 border-l-destructive bg-red-500/5",
+                      status === "warning" &&
+                        "border-l-4 border-l-yellow-500 bg-yellow-500/5",
+                      status === "success" &&
+                        "border-l-4 border-l-emerald-500 bg-emerald-500/5"
                     )}
                   >
                     <div className="flex items-center justify-between">
@@ -171,8 +239,8 @@ export function PasswordHealth() {
                             risk === "high"
                               ? "bg-destructive/10 text-destructive"
                               : risk === "medium"
-                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                           }`}
                         >
                           {risk}
@@ -218,11 +286,11 @@ export function PasswordHealth() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="overflow-visible">
         <CardHeader>
-          <CardTitle className="text-base">Add Account Credential</CardTitle>
+          <CardTitle className="text-base">Tag Existing Account</CardTitle>
           <CardDescription className="text-xs">
-            Tag an account by risk level to prioritize its security warnings.
+            Choose a saved account to prioritize its security warnings.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -232,14 +300,83 @@ export function PasswordHealth() {
           >
             <div className="flex-1 space-y-1.5">
               <Label htmlFor="quick-account-name">Account name</Label>
-              <Input
-                id="quick-account-name"
-                placeholder="e.g., Student Database"
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-              />
+              <div className="relative">
+                <Input
+                  id="quick-account-name"
+                  placeholder="Type to search saved accounts"
+                  value={accountName}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={
+                    suggestionsOpen && matchingCredentials.length > 0
+                  }
+                  aria-controls="quick-account-suggestions"
+                  aria-describedby={
+                    emptyVault ? "quick-account-hint" : undefined
+                  }
+                  aria-activedescendant={
+                    suggestionsOpen &&
+                    activeSuggestionIndex >= 0 &&
+                    matchingCredentials[activeSuggestionIndex]
+                      ? `quick-account-option-${activeSuggestionIndex}`
+                      : undefined
+                  }
+                  disabled={emptyVault}
+                  onFocus={() => {
+                    setSuggestionsOpen(true)
+                    setActiveSuggestionIndex(0)
+                  }}
+                  onBlur={() => setSuggestionsOpen(false)}
+                  onKeyDown={handleAccountKeyDown}
+                  onChange={(event) => {
+                    setAccountName(event.target.value)
+                    changeSelection(null)
+                    // Highlight the top match so Enter cannot pick blind.
+                    setActiveSuggestionIndex(0)
+                    setSuggestionsOpen(true)
+                    setFormError(null)
+                  }}
+                />
+                {suggestionsOpen && matchingCredentials.length > 0 ? (
+                  <ul
+                    id="quick-account-suggestions"
+                    className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+                    role="listbox"
+                    aria-label="Matching saved accounts"
+                  >
+                    {matchingCredentials.map((credential, index) => (
+                      <li
+                        key={credential.id}
+                        id={`quick-account-option-${index}`}
+                        ref={
+                          index === activeSuggestionIndex
+                            ? activeOptionRef
+                            : undefined
+                        }
+                        className={cn(
+                          "cursor-pointer rounded-sm px-3 py-2 text-sm",
+                          index === activeSuggestionIndex
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-accent/50"
+                        )}
+                        role="option"
+                        aria-selected={index === activeSuggestionIndex}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectCredential(credential)}
+                      >
+                        <span className="block font-medium">
+                          {credential.accountName}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {credential.siteOrApp}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             </div>
-            <div className="w-full sm:w-48 space-y-1.5">
+            <div className="w-full space-y-1.5 sm:w-48">
               <Label htmlFor="quick-risk-level">Risk level</Label>
               <select
                 id="quick-risk-level"
@@ -252,14 +389,27 @@ export function PasswordHealth() {
                 <option value="high">High Risk</option>
               </select>
             </div>
-            <Button type="submit" className="h-7 px-4">
+            <Button
+              type="submit"
+              className="h-7 px-4"
+              disabled={busy || emptyVault}
+            >
               <Plus className="size-3.5" aria-hidden="true" />
-              Save
+              Save risk level
             </Button>
           </form>
-          {formError && (
-            <p className="mt-2 text-xs text-destructive">{formError}</p>
-          )}
+          {emptyVault ? (
+            <p
+              id="quick-account-hint"
+              className="mt-2 text-xs text-muted-foreground"
+            >
+              Add a credential in the Vault before assigning a risk level.
+            </p>
+          ) : formError ? (
+            <p className="mt-2 text-xs text-destructive" role="alert">
+              {formError}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>
