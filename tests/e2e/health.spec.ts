@@ -18,8 +18,12 @@ test("opens Health from a credential shield", async ({ page }) => {
   await page.getByRole("button", { name: "Create encrypted vault" }).click()
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
-  await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
-  await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+  await page
+    .getByRole("textbox", { name: "Username" })
+    .fill("student@example.edu")
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("private-password-123")
   await page.getByRole("button", { name: "Save credential" }).click()
 
   await page
@@ -103,8 +107,12 @@ test("tags only the selected saved account from keyboard or mouse suggestions", 
   async function saveCredential(site: string) {
     await page.getByLabel("Account label").fill("University email")
     await page.getByLabel("Website or app").fill(site)
-    await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
-    await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+    await page
+      .getByRole("textbox", { name: "Username" })
+      .fill("student@example.edu")
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("private-password-123")
     await page.getByRole("button", { name: "Save credential" }).click()
     await expect(
       page.getByRole("dialog", { name: "Add a credential" })
@@ -169,4 +177,32 @@ test("tags only the selected saved account from keyboard or mouse suggestions", 
     page.getByText("Select a saved account from the suggestions.")
   ).toBeVisible()
   await expect(reports.getByRole("listitem")).toHaveCount(2)
+})
+
+test("asks for a saved account before a risk level can be assigned", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page
+    .getByLabel("Vault password", { exact: true })
+    .fill("correct horse battery staple")
+  await page
+    .getByLabel("Confirm vault password")
+    .fill("correct horse battery staple")
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  // An empty vault opens the add dialog; close it to reach the Health page.
+  await page.keyboard.press("Escape")
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+
+  await expect(
+    page.getByText(
+      "Add a credential in the Vault before assigning a risk level."
+    )
+  ).toBeVisible()
+  await expect(
+    page.getByRole("combobox", { name: "Account name" })
+  ).toBeDisabled()
+  await expect(
+    page.getByRole("button", { name: "Save risk level" })
+  ).toBeDisabled()
 })

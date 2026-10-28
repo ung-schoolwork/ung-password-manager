@@ -1,11 +1,6 @@
 "use client"
 
-import {
-  useMemo,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react"
+import { useMemo, useState, type FormEvent, type KeyboardEvent } from "react"
 import { AlertTriangle, KeyRound, Plus } from "lucide-react"
 
 import { useVault } from "@/components/vault/vault-provider"
@@ -22,7 +17,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { Credential, RiskLevel } from "@/lib/vault/types"
-import { HealthShield, type HealthStatus } from "@/components/vault/health-shield"
+import {
+  HealthShield,
+  type HealthStatus,
+} from "@/components/vault/health-shield"
 
 export function PasswordHealth() {
   const { credentials, updateCredential, busy } = useVault()
@@ -35,6 +33,7 @@ export function PasswordHealth() {
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
 
+  const emptyVault = credentials.length === 0
   const matchingCredentials = credentials.filter((credential) => {
     const query = accountName.trim().toLowerCase()
     return (
@@ -76,7 +75,6 @@ export function PasswordHealth() {
       )
       setAccountName("")
       setSelectedCredentialId(null)
-      setRiskLevel("medium")
     } catch (caught) {
       setFormError(
         caught instanceof Error
@@ -89,6 +87,8 @@ export function PasswordHealth() {
   function selectCredential(credential: Credential) {
     setAccountName(credential.accountName)
     setSelectedCredentialId(credential.id)
+    // Start from the tag the account already has, so saving keeps it.
+    setRiskLevel(credential.riskLevel ?? "low")
     setSuggestionsOpen(false)
     setActiveSuggestionIndex(-1)
     setFormError(null)
@@ -186,9 +186,12 @@ export function PasswordHealth() {
                     key={acc.id}
                     className={cn(
                       "rounded-lg border p-4 text-card-foreground shadow-sm transition-colors",
-                      status === "danger" && "border-l-4 border-l-destructive bg-red-500/5",
-                      status === "warning" && "border-l-4 border-l-yellow-500 bg-yellow-500/5",
-                      status === "success" && "border-l-4 border-l-emerald-500 bg-emerald-500/5"
+                      status === "danger" &&
+                        "border-l-4 border-l-destructive bg-red-500/5",
+                      status === "warning" &&
+                        "border-l-4 border-l-yellow-500 bg-yellow-500/5",
+                      status === "success" &&
+                        "border-l-4 border-l-emerald-500 bg-emerald-500/5"
                     )}
                   >
                     <div className="flex items-center justify-between">
@@ -210,8 +213,8 @@ export function PasswordHealth() {
                             risk === "high"
                               ? "bg-destructive/10 text-destructive"
                               : risk === "medium"
-                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                           }`}
                         >
                           {risk}
@@ -282,6 +285,9 @@ export function PasswordHealth() {
                     suggestionsOpen && matchingCredentials.length > 0
                   }
                   aria-controls="quick-account-suggestions"
+                  aria-describedby={
+                    emptyVault ? "quick-account-hint" : undefined
+                  }
                   aria-activedescendant={
                     suggestionsOpen &&
                     activeSuggestionIndex >= 0 &&
@@ -289,6 +295,7 @@ export function PasswordHealth() {
                       ? `quick-account-option-${activeSuggestionIndex}`
                       : undefined
                   }
+                  disabled={emptyVault}
                   onFocus={() => setSuggestionsOpen(true)}
                   onBlur={() => setSuggestionsOpen(false)}
                   onKeyDown={handleAccountKeyDown}
@@ -334,7 +341,7 @@ export function PasswordHealth() {
                 ) : null}
               </div>
             </div>
-            <div className="w-full sm:w-48 space-y-1.5">
+            <div className="w-full space-y-1.5 sm:w-48">
               <Label htmlFor="quick-risk-level">Risk level</Label>
               <select
                 id="quick-risk-level"
@@ -350,15 +357,24 @@ export function PasswordHealth() {
             <Button
               type="submit"
               className="h-7 px-4"
-              disabled={busy || credentials.length === 0}
+              disabled={busy || emptyVault}
             >
               <Plus className="size-3.5" aria-hidden="true" />
               Save risk level
             </Button>
           </form>
-          {formError && (
-            <p className="mt-2 text-xs text-destructive">{formError}</p>
-          )}
+          {emptyVault ? (
+            <p
+              id="quick-account-hint"
+              className="mt-2 text-xs text-muted-foreground"
+            >
+              Add a credential in the Vault before assigning a risk level.
+            </p>
+          ) : formError ? (
+            <p className="mt-2 text-xs text-destructive" role="alert">
+              {formError}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>
