@@ -18,8 +18,12 @@ test("opens Health from a credential shield", async ({ page }) => {
   await page.getByRole("button", { name: "Create encrypted vault" }).click()
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
-  await page.getByRole("textbox", { name: "Username" }).fill("student@example.edu")
-  await page.getByLabel("Password", { exact: true }).fill("private-password-123")
+  await page
+    .getByRole("textbox", { name: "Username" })
+    .fill("student@example.edu")
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("private-password-123")
   await page.getByRole("button", { name: "Save credential" }).click()
 
   await page
@@ -51,6 +55,9 @@ test("shows saved password warnings and their reasons", async ({
     .fill("student@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
   await expect(
@@ -72,6 +79,9 @@ test("shows saved password warnings and their reasons", async ({
     .fill("backup@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("password")
   await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
   const reports = page.getByRole("list", { name: "Password health reports" })

@@ -25,6 +25,7 @@ export interface CredentialHealthReport extends Credential {
 const MIN_LENGTH = 8 // under this -> "Weak"
 const RECOMMENDED_LENGTH = 15 // 8-14 chars -> "Short"
 const DAYS_OVERDUE = 90 // unchanged for this long -> "Overdue"
+const MIN_SHAPE_LENGTH = 8 // stripped body must be this long to judge its shape
 
 // Maps risk labels to numbers so they can be compared when sorting.
 const RISK_PRIORITY: Record<string, number> = {
@@ -33,11 +34,12 @@ const RISK_PRIORITY: Record<string, number> = {
   low: 1,
 }
 
-// Small hardcoded blocklist. Array + .includes() is a linear scan, which is
-// fine at 15 entries. NOTE: exact (case-insensitive) matches only, so
-// "Password1!" would NOT be caught by this list.
+// Small on-device denylist, not a comprehensive breached-password corpus.
+// Exact case-insensitive matches avoid sending saved passwords to a service.
 const COMMON_PASSWORDS = [
   "password",
+  "password1",
+  "password1!",
   "123456",
   "12345678",
   "qwerty",
@@ -53,6 +55,65 @@ const COMMON_PASSWORDS = [
   "sunshine",
   "princess",
 ]
+
+// Outer punctuation is not part of a password's shape, so a single "!" must not
+// hide a repeated or sequential body. Only strip when enough characters remain
+// to judge, so short passwords are still checked exactly as typed.
+function shapeCandidate(password: string): string {
+  const stripped = password
+    .replace(/^[^a-z0-9]+/i, "")
+    .replace(/[^a-z0-9]+$/i, "")
+
+  return stripped.length >= MIN_SHAPE_LENGTH ? stripped : password
+}
+
+function isRepeatedCharacter(password: string): boolean {
+  const characters = [...password]
+  return (
+    characters.length > 0 &&
+    characters.every((character) => character === characters[0])
+  )
+}
+
+function isSimpleSequence(password: string): boolean {
+  const normalized = password.toLowerCase()
+  const alphabet = /^\d+$/.test(normalized)
+    ? "0123456789"
+    : /^[a-z]+$/.test(normalized)
+      ? "abcdefghijklmnopqrstuvwxyz"
+      : null
+
+  if (!alphabet || normalized.length < 3) return false
+
+  const indexes = [...normalized].map((character) =>
+    alphabet.indexOf(character)
+  )
+  const followsStep = (step: 1 | -1) =>
+    indexes.every(
+      (index, position) =>
+        position === 0 ||
+        index ===
+          (indexes[position - 1] + step + alphabet.length) % alphabet.length
+    )
+
+  return followsStep(1) || followsStep(-1)
+}
+
+// Flags a short chunk repeated to fill the whole password, such as
+// "abcabcabc" or "AaAaAa". Only periods that repeat at least twice count.
+function isRepeatedPattern(password: string): boolean {
+  const characters = [...password.toLowerCase()]
+
+  for (let size = 1; size <= Math.floor(characters.length / 2); size++) {
+    if (characters.length % size !== 0) continue
+    const repeatsEntirely = characters.every(
+      (character, position) => character === characters[position % size]
+    )
+    if (repeatsEntirely) return true
+  }
+
+  return false
+}
 
 export function analyzeCredentialsHealth(
   credentials: Credential[]
@@ -111,7 +172,32 @@ export function analyzeCredentialsHealth(
           })
         }
 
-        // --- Check 3: simple word+number pattern ------------------------------
+        // --- Check 3: repeated or sequential shape ----------------------------
+        // Judges the body without outer punctuation, so "1234567890123456!"
+        // cannot slip past the sequence check.
+        const shape = shapeCandidate(pwd)
+
+        if (isRepeatedCharacter(shape)) {
+          warnings.push({
+            type: "Weak",
+            explanation:
+              "This password repeats the same character and is easy to guess.",
+          })
+        } else if (isSimpleSequence(shape)) {
+          warnings.push({
+            type: "Weak",
+            explanation:
+              "This password follows a simple character sequence and is easy to guess.",
+          })
+        } else if (isRepeatedPattern(shape)) {
+          warnings.push({
+            type: "Weak",
+            explanation:
+              "This password repeats the same short pattern and is easy to guess.",
+          })
+        }
+
+        // --- Check 4: simple word+number pattern ------------------------------
         // Flags letters-then-digits ("dragon99") or digits-then-letters
         // ("123abc"). Regex breakdown:
         //   ^ ... $   must match the whole string
@@ -131,7 +217,7 @@ export function analyzeCredentialsHealth(
           })
         }
 
-        // --- Check 4: reuse ---------------------------------------------------
+        // --- Check 5: reuse ---------------------------------------------------
         // Look up everyone sharing this password, then remove this credential
         // itself. If anyone is left, the password is reused.
         const otherAccounts = (passwordGroups.get(pwd) ?? []).filter(
@@ -148,7 +234,7 @@ export function analyzeCredentialsHealth(
           })
         }
 
-        // --- Check 5: age -----------------------------------------------------
+        // --- Check 6: age -----------------------------------------------------
         // Fallback chain: when the password last changed, else when the record
         // was last edited, else when it was created. Date objects compare with
         // `<` because they coerce to timestamps.
