@@ -84,7 +84,9 @@ export function VaultShell({
                 onClick={lockVault}
               >
                 <Lock className="size-4" aria-hidden="true" />
-                <span className="hidden sm:inline">Lock vault</span>
+                <span className="hidden sm:inline" aria-hidden="true">
+                  Lock vault
+                </span>
               </Button>
             ) : null}
           </div>
