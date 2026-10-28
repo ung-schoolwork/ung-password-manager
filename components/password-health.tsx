@@ -1,6 +1,13 @@
 "use client"
 
-import { useMemo, useState, type FormEvent, type KeyboardEvent } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 import { AlertTriangle, KeyRound, Plus } from "lucide-react"
 
 import { useVault } from "@/components/vault/vault-provider"
@@ -32,17 +39,23 @@ export function PasswordHealth() {
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1)
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
+  const activeOptionRef = useRef<HTMLLIElement>(null)
 
   const emptyVault = credentials.length === 0
-  const matchingCredentials = credentials.filter((credential) => {
-    const query = accountName.trim().toLowerCase()
-    return (
+  const query = accountName.trim().toLowerCase()
+  const matchingCredentials = credentials.filter(
+    (credential) =>
       query.length > 0 &&
-      `${credential.accountName} ${credential.siteOrApp}`
-        .toLowerCase()
-        .includes(query)
-    )
-  })
+      (credential.accountName.toLowerCase().includes(query) ||
+        credential.siteOrApp.toLowerCase().includes(query))
+  )
+
+  // The highlight has to stay visible when the list is longer than its box.
+  useEffect(() => {
+    if (!suggestionsOpen || activeSuggestionIndex < 0) return
+    activeOptionRef.current?.scrollIntoView({ block: "nearest" })
+  }, [activeSuggestionIndex, suggestionsOpen])
+
   const auditedAccounts = useMemo(
     () => analyzeCredentialsHealth(credentials),
     [credentials]
@@ -113,8 +126,7 @@ export function PasswordHealth() {
         index < 0 ? matchingCredentials.length - 1 : Math.max(index - 1, 0)
       )
     } else if (event.key === "Enter" && suggestionsOpen) {
-      const credential =
-        matchingCredentials[activeSuggestionIndex] ?? matchingCredentials[0]
+      const credential = matchingCredentials[activeSuggestionIndex]
       if (!credential) return
       event.preventDefault()
       selectCredential(credential)
@@ -296,13 +308,17 @@ export function PasswordHealth() {
                       : undefined
                   }
                   disabled={emptyVault}
-                  onFocus={() => setSuggestionsOpen(true)}
+                  onFocus={() => {
+                    setSuggestionsOpen(true)
+                    setActiveSuggestionIndex(0)
+                  }}
                   onBlur={() => setSuggestionsOpen(false)}
                   onKeyDown={handleAccountKeyDown}
                   onChange={(event) => {
                     setAccountName(event.target.value)
                     setSelectedCredentialId(null)
-                    setActiveSuggestionIndex(-1)
+                    // Highlight the top match so Enter cannot pick blind.
+                    setActiveSuggestionIndex(0)
                     setSuggestionsOpen(true)
                     setFormError(null)
                   }}
@@ -318,6 +334,11 @@ export function PasswordHealth() {
                       <li
                         key={credential.id}
                         id={`quick-account-option-${index}`}
+                        ref={
+                          index === activeSuggestionIndex
+                            ? activeOptionRef
+                            : undefined
+                        }
                         className={cn(
                           "cursor-pointer rounded-sm px-3 py-2 text-sm",
                           index === activeSuggestionIndex

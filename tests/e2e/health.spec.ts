@@ -92,9 +92,11 @@ test("shows saved password warnings and their reasons", async ({
   })
 })
 
-test("tags only the selected saved account from keyboard or mouse suggestions", async ({
+test("tags only the highlighted saved account and keeps its current risk level", async ({
   page,
 }) => {
+  test.setTimeout(60_000)
+
   await page.goto("/")
   await page
     .getByLabel("Vault password", { exact: true })
@@ -119,6 +121,7 @@ test("tags only the selected saved account from keyboard or mouse suggestions", 
     ).toHaveCount(0)
   }
 
+  // Two saved accounts share a label, so only the site tells them apart.
   await saveCredential("mail.example.edu")
   await page.getByRole("button", { name: "Add credential" }).click()
   await saveCredential("backup.example.edu")
@@ -132,11 +135,24 @@ test("tags only the selected saved account from keyboard or mouse suggestions", 
     .locator('[data-slot="card"]')
     .filter({ hasText: "Tag Existing Account" })
   const reports = page.getByRole("list", { name: "Password health reports" })
+  const riskLevel = page.getByLabel("Risk level")
+  const saveRisk = page.getByRole("button", { name: "Save risk level" })
+  const reportFor = (site: string) =>
+    reports.getByRole("listitem").filter({ hasText: site })
 
+  // Typing opens the list over the card with the top match highlighted.
   await accountInput.fill("University email")
   await expect(suggestions.getByRole("option")).toHaveCount(2)
   await expect(suggestions.getByText("mail.example.edu")).toBeVisible()
   await expect(suggestions.getByText("backup.example.edu")).toBeVisible()
+  await expect(suggestions.getByRole("option").first()).toHaveAttribute(
+    "aria-selected",
+    "true"
+  )
+  await expect(accountInput).toHaveAttribute(
+    "aria-activedescendant",
+    "quick-account-option-0"
+  )
   await expect(tagCard).toHaveCSS("overflow", "visible")
   const [inputBounds, suggestionBounds] = await Promise.all([
     accountInput.boundingBox(),
@@ -147,32 +163,60 @@ test("tags only the selected saved account from keyboard or mouse suggestions", 
   expect(suggestionBounds!.y).toBeGreaterThanOrEqual(
     inputBounds!.y + inputBounds!.height - 1
   )
-  await suggestions
-    .getByRole("option")
-    .filter({ hasText: "backup.example.edu" })
-    .click()
-  await page.getByLabel("Risk level").selectOption("high")
-  await page.getByRole("button", { name: "Save risk level" }).click()
 
-  const backupReport = reports
-    .getByRole("listitem")
-    .filter({ hasText: "backup.example.edu" })
-  const mailReport = reports
-    .getByRole("listitem")
-    .filter({ hasText: "mail.example.edu" })
-  await expect(reports.getByRole("listitem")).toHaveCount(2)
-  await expect(backupReport.getByText("high", { exact: true })).toBeVisible()
-  await expect(mailReport.getByText("low", { exact: true })).toBeVisible()
-
-  await accountInput.fill("mail.example.edu")
+  // Arrow keys move the highlight, and Enter tags the highlighted account.
+  await accountInput.press("ArrowDown")
+  const highlighted = suggestions.getByRole("option").nth(1)
+  await expect(highlighted).toHaveAttribute("aria-selected", "true")
+  const highlightedSite = (
+    await highlighted.locator("span").nth(1).innerText()
+  ).trim()
+  const otherSite =
+    highlightedSite === "mail.example.edu"
+      ? "backup.example.edu"
+      : "mail.example.edu"
   await accountInput.press("Enter")
-  await page.getByLabel("Risk level").selectOption("medium")
-  await page.getByRole("button", { name: "Save risk level" }).click()
-  await expect(mailReport.getByText("medium", { exact: true })).toBeVisible()
-  await expect(backupReport.getByText("high", { exact: true })).toBeVisible()
+  await expect(suggestions).toHaveCount(0)
+  // The form starts from the tag the account already has (none = low).
+  await expect(riskLevel).toHaveValue("low")
+  await riskLevel.selectOption("high")
+  await saveRisk.click()
+  await expect(
+    reportFor(highlightedSite).getByText("high", { exact: true })
+  ).toBeVisible()
+  await expect(
+    reportFor(otherSite).getByText("low", { exact: true })
+  ).toBeVisible()
+  // Tagging reuses the saved account instead of adding a credential.
+  await expect(reports.getByRole("listitem")).toHaveCount(2)
 
+  // A tagged account opens with its own tag, and saving keeps it unchanged.
+  await accountInput.fill(highlightedSite)
+  await suggestions.getByRole("option").first().click()
+  await expect(riskLevel).toHaveValue("high")
+  await saveRisk.click()
+  await expect(
+    reportFor(highlightedSite).getByText("high", { exact: true })
+  ).toBeVisible()
+  await expect(reports.getByRole("listitem")).toHaveCount(2)
+
+  // A single match is highlighted while typing, so Enter tags it.
+  await accountInput.fill(otherSite)
+  await expect(suggestions.getByRole("option")).toHaveCount(1)
+  await accountInput.press("Enter")
+  await expect(riskLevel).toHaveValue("low")
+  await riskLevel.selectOption("medium")
+  await saveRisk.click()
+  await expect(
+    reportFor(otherSite).getByText("medium", { exact: true })
+  ).toBeVisible()
+  await expect(
+    reportFor(highlightedSite).getByText("high", { exact: true })
+  ).toBeVisible()
+
+  // An unknown name tags nobody and still adds no credential.
   await accountInput.fill("not a saved account")
-  await page.getByRole("button", { name: "Save risk level" }).click()
+  await saveRisk.click()
   await expect(
     page.getByText("Select a saved account from the suggestions.")
   ).toBeVisible()
