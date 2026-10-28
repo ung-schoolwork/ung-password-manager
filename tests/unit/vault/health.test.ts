@@ -34,6 +34,18 @@ describe("analyzeCredentialsHealth", () => {
     ])
   })
 
+  it("ranks the risk level above the warning count", async () => {
+    const reports = await analyzeCredentialsHealth([
+      credential("low", { riskLevel: "low", password: "password" }),
+      credential("high", {
+        riskLevel: "high",
+        password: "A unique high-risk passphrase",
+      }),
+    ])
+
+    expect(reports.map((report) => report.id)).toEqual(["high", "low"])
+  })
+
   it("treats credentials without a risk tag as low risk", async () => {
     const reports = await analyzeCredentialsHealth([
       credential("untagged"),
