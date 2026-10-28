@@ -397,6 +397,46 @@ describe("VaultService", () => {
     expect(service.listCredentials()).toEqual([])
   })
 
+  it("stops retrying an add when the vault keeps changing", async () => {
+    const repository = new MemoryVaultRepository()
+    repository.envelope = await createEnvelope([])
+    const service = createService(repository)
+    await service.unlockVault(passphrase)
+
+    // Every load queues the next refresh, so the saved vault changes faster
+    // than a save attempt can be built from it. The retry limit is the only
+    // way out of the loop, and VaultBusyError is thrown only on the last
+    // allowed attempt.
+    const load = repository.load.bind(repository)
+    let changing = true
+    repository.load = async () => {
+      const envelope = await load()
+      if (changing) void service.refresh()
+      return envelope
+    }
+    // Ends the churn if the retry limit ever goes missing, so a save that
+    // retries forever fails this test instead of hanging it.
+    const stop = setTimeout(() => {
+      changing = false
+    }, 20_000)
+
+    try {
+      const refreshing = service.refresh()
+      const saving = service.saveCredential(validDraft)
+      await refreshing
+
+      await expect(saving).rejects.toBeInstanceOf(VaultBusyError)
+    } finally {
+      changing = false
+      clearTimeout(stop)
+      await service.refresh()
+    }
+
+    // No attempt could be saved, so the repository never received the add.
+    expect(repository.saveCalls).toBe(0)
+    expect(service.listCredentials()).toEqual([])
+  }, 30_000)
+
   describe("editing while another device saves", () => {
     const otherCredential: Credential = {
       ...validDraft,
