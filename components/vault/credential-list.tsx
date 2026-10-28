@@ -21,7 +21,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
-import { HealthShield } from "@/components/vault/health-shield"
+import {
+  getHealthStatusLabel,
+  HealthShield,
+} from "@/components/vault/health-shield"
 import {
   analyzeCredentialsHealth,
   type CredentialHealthReport,
@@ -143,7 +146,7 @@ function CredentialRow({
             render={
               <button
                 type="button"
-                aria-label={`Password health for ${credential.accountName}`}
+                aria-label={`Password health for ${credential.accountName}: ${getHealthStatusLabel(status)}`}
                 className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40 cursor-pointer"
               />
             }
