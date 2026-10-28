@@ -72,10 +72,11 @@ export function VaultShell({ children }: { children: React.ReactNode }) {
               className="h-9 px-3 text-sm"
               type="button"
               variant="outline"
+              aria-label="Lock vault"
               onClick={lockVault}
             >
               <Lock className="size-4" aria-hidden="true" />
-              <span className="hidden sm:inline">Lock vault</span>
+              <span className="hidden sm:inline" aria-hidden="true">Lock vault</span>
             </Button>
           </div>
         </div>
