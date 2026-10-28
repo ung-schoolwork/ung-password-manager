@@ -40,6 +40,15 @@ export function PasswordHealth() {
   const [riskLevel, setRiskLevel] = useState<RiskLevel>("medium")
   const [formError, setFormError] = useState<string | null>(null)
   const activeOptionRef = useRef<HTMLLIElement>(null)
+  // A save can finish after the user already picked another account. Each
+  // change to the selection bumps this token, so a save only clears the form
+  // when the selection it saved is still the one on screen.
+  const selectionTokenRef = useRef(0)
+
+  function changeSelection(id: string | null) {
+    selectionTokenRef.current += 1
+    setSelectedCredentialId(id)
+  }
 
   const emptyVault = credentials.length === 0
   const query = accountName.trim().toLowerCase()
@@ -80,14 +89,19 @@ export function PasswordHealth() {
       return
     }
 
+    const savedToken = selectionTokenRef.current
     try {
       await updateCredential(
         selectedCredential.id,
         { riskLevel },
         selectedCredential.updatedAt
       )
-      setAccountName("")
-      setSelectedCredentialId(null)
+      // Clearing the form is only right while the saved account is still the
+      // one on screen; a later pick must survive this save finishing.
+      if (selectionTokenRef.current === savedToken) {
+        setAccountName("")
+        changeSelection(null)
+      }
     } catch (caught) {
       setFormError(
         caught instanceof Error
@@ -99,7 +113,7 @@ export function PasswordHealth() {
 
   function selectCredential(credential: Credential) {
     setAccountName(credential.accountName)
-    setSelectedCredentialId(credential.id)
+    changeSelection(credential.id)
     // Start from the tag the account already has, so saving keeps it.
     setRiskLevel(credential.riskLevel ?? "low")
     setSuggestionsOpen(false)
@@ -316,7 +330,7 @@ export function PasswordHealth() {
                   onKeyDown={handleAccountKeyDown}
                   onChange={(event) => {
                     setAccountName(event.target.value)
-                    setSelectedCredentialId(null)
+                    changeSelection(null)
                     // Highlight the top match so Enter cannot pick blind.
                     setActiveSuggestionIndex(0)
                     setSuggestionsOpen(true)

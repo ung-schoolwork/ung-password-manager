@@ -139,6 +139,13 @@ test("tags only the highlighted saved account and keeps its current risk level",
   const saveRisk = page.getByRole("button", { name: "Save risk level" })
   const reportFor = (site: string) =>
     reports.getByRole("listitem").filter({ hasText: site })
+  // A finished save clears the account field, so waiting for that keeps the
+  // next step from running while the previous save is still in flight.
+  async function saveRiskLevel() {
+    await saveRisk.click()
+    await expect(accountInput).toHaveValue("")
+    await expect(saveRisk).toBeEnabled()
+  }
 
   // Typing opens the list over the card with the top match highlighted.
   await accountInput.fill("University email")
@@ -180,7 +187,7 @@ test("tags only the highlighted saved account and keeps its current risk level",
   // The form starts from the tag the account already has (none = low).
   await expect(riskLevel).toHaveValue("low")
   await riskLevel.selectOption("high")
-  await saveRisk.click()
+  await saveRiskLevel()
   await expect(
     reportFor(highlightedSite).getByText("high", { exact: true })
   ).toBeVisible()
@@ -194,7 +201,7 @@ test("tags only the highlighted saved account and keeps its current risk level",
   await accountInput.fill(highlightedSite)
   await suggestions.getByRole("option").first().click()
   await expect(riskLevel).toHaveValue("high")
-  await saveRisk.click()
+  await saveRiskLevel()
   await expect(
     reportFor(highlightedSite).getByText("high", { exact: true })
   ).toBeVisible()
@@ -206,7 +213,7 @@ test("tags only the highlighted saved account and keeps its current risk level",
   await accountInput.press("Enter")
   await expect(riskLevel).toHaveValue("low")
   await riskLevel.selectOption("medium")
-  await saveRisk.click()
+  await saveRiskLevel()
   await expect(
     reportFor(otherSite).getByText("medium", { exact: true })
   ).toBeVisible()
@@ -219,6 +226,90 @@ test("tags only the highlighted saved account and keeps its current risk level",
   await saveRisk.click()
   await expect(
     page.getByText("Select a saved account from the suggestions.")
+  ).toBeVisible()
+  await expect(reports.getByRole("listitem")).toHaveCount(2)
+})
+
+test("keeps a newer account selection when an earlier save finishes late", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await page
+    .getByLabel("Vault password", { exact: true })
+    .fill("correct horse battery staple")
+  await page
+    .getByLabel("Confirm vault password")
+    .fill("correct horse battery staple")
+  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+
+  async function saveCredential(label: string, site: string) {
+    await page.getByLabel("Account label").fill(label)
+    await page.getByLabel("Website or app").fill(site)
+    await page
+      .getByRole("textbox", { name: "Username" })
+      .fill("student@example.edu")
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("private-password-123")
+    await page.getByRole("button", { name: "Save credential" }).click()
+    await expect(
+      page.getByRole("dialog", { name: "Add a credential" })
+    ).toHaveCount(0)
+  }
+
+  await saveCredential("Mail account", "mail.example.edu")
+  await page.getByRole("button", { name: "Add credential" }).click()
+  await saveCredential("Backup account", "backup.example.edu")
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+
+  const accountInput = page.getByRole("combobox", { name: "Account name" })
+  const reports = page.getByRole("list", { name: "Password health reports" })
+  const riskLevel = page.getByLabel("Risk level")
+  const saveRisk = page.getByRole("button", { name: "Save risk level" })
+  const reportFor = (label: string) =>
+    reports.getByRole("listitem").filter({ hasText: label })
+
+  // Hold the first save open so the next account is chosen while it runs.
+  let releaseSave = () => {}
+  const saveHeld = new Promise<void>((resolve) => {
+    releaseSave = resolve
+  })
+  let holdNextWrite = true
+  await page.route("**/api/vault", async (route) => {
+    if (holdNextWrite && route.request().method() === "PUT") {
+      holdNextWrite = false
+      await saveHeld
+    }
+    await route.continue()
+  })
+
+  await accountInput.fill("Mail account")
+  await accountInput.press("Enter")
+  await expect(riskLevel).toHaveValue("low")
+  await riskLevel.selectOption("high")
+  await saveRisk.click()
+  await expect(saveRisk).toBeDisabled()
+
+  // Pick another account before the first save has been answered.
+  await accountInput.fill("Backup account")
+  await accountInput.press("Enter")
+  await expect(riskLevel).toHaveValue("low")
+
+  releaseSave()
+
+  // The finished save must leave the newly chosen account in place.
+  await expect(saveRisk).toBeEnabled()
+  await expect(accountInput).toHaveValue("Backup account")
+  await expect(riskLevel).toHaveValue("low")
+
+  // Saving the second account changes that account and nothing else.
+  await saveRisk.click()
+  await expect(accountInput).toHaveValue("")
+  await expect(
+    reportFor("mail.example.edu").getByText("high", { exact: true })
+  ).toBeVisible()
+  await expect(
+    reportFor("backup.example.edu").getByText("low", { exact: true })
   ).toBeVisible()
   await expect(reports.getByRole("listitem")).toHaveCount(2)
 })
