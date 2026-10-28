@@ -14,7 +14,10 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
-import { HealthShield } from "@/components/vault/health-shield"
+import {
+  getHealthStatusLabel,
+  HealthShield,
+} from "@/components/vault/health-shield"
 import {
   analyzeCredentialsHealth,
   type CredentialHealthReport,
@@ -130,7 +133,7 @@ function CredentialRow({
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <Link
-          aria-label={`Password health for ${credential.accountName}`}
+          aria-label={`Password health for ${credential.accountName}: ${getHealthStatusLabel(status)}`}
           className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           href="/health"
         >

@@ -27,7 +27,9 @@ test("opens Health from a credential shield", async ({ page }) => {
   await page.getByRole("button", { name: "Save credential" }).click()
 
   await page
-    .getByRole("link", { name: "Password health for University email" })
+    .getByRole("link", {
+      name: "Password health for University email: Healthy; no warnings",
+    })
     .click()
 
   await expect(page).toHaveURL(/\/health$/)
@@ -60,12 +62,16 @@ test("shows saved password warnings and their reasons", async ({
   ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
+  const reports = page.getByRole("list", { name: "Password health reports" })
   await expect(
     page.getByText("Vault Password Health", { exact: true })
   ).toBeVisible()
   await expect(
     page.getByText("This matches a commonly used password.")
   ).toBeVisible()
+  await expect(
+    reports.getByRole("img", { name: "Needs attention" })
+  ).toHaveCount(1)
   await expect(page.getByText("No issues found by these checks.")).toHaveCount(
     0
   )
@@ -84,8 +90,10 @@ test("shows saved password warnings and their reasons", async ({
   ).toHaveCount(0)
 
   await page.getByRole("link", { name: "Health", exact: true }).click()
-  const reports = page.getByRole("list", { name: "Password health reports" })
   await expect(reports.getByRole("listitem")).toHaveCount(2)
+  await expect(
+    reports.getByRole("img", { name: "Needs attention" })
+  ).toHaveCount(2)
   await expect(reports.getByText("Reused:")).toHaveCount(2)
   await expect(
     reports.getByText(/this password is also saved for/i)

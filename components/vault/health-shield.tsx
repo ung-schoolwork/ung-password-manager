@@ -1,6 +1,6 @@
 "use client"
 
-import { Shield, ShieldAlert, ShieldCheck } from "lucide-react"
+import { AlertTriangle, Shield, ShieldAlert, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export type HealthStatus = "danger" | "warning" | "success" | "neutral"
@@ -9,6 +9,17 @@ interface HealthShieldProps {
   status: HealthStatus
   size?: "sm" | "md" | "lg"
   className?: string
+}
+
+export function getHealthStatusLabel(status: HealthStatus): string {
+  const labels: Record<HealthStatus, string> = {
+    danger: "High risk; needs attention",
+    warning: "Needs attention",
+    success: "Healthy; no warnings",
+    neutral: "Health status unknown",
+  }
+
+  return labels[status]
 }
 
 export function HealthShield({
@@ -28,16 +39,26 @@ export function HealthShield({
     lg: "size-6",
   }
 
-  // Maps the status strings to your specific requested colors using Tailwind
   const statusStyles = {
-    danger: "bg-red-600 text-white border-red-500",
-    warning: "bg-yellow-400 text-black border-yellow-300",
-    success: "bg-emerald-500 text-white border-emerald-400",
-    neutral: "bg-muted text-muted-foreground border-border",
+    danger:
+      "bg-red-100 text-red-800 border-red-800 dark:bg-red-950 dark:text-red-200 dark:border-red-200",
+    warning:
+      "bg-amber-100 text-amber-900 border-amber-900 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-200",
+    success:
+      "bg-emerald-100 text-emerald-900 border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-200",
+    neutral: "bg-muted text-foreground border-foreground",
   }
+  const StatusIcon = {
+    danger: ShieldAlert,
+    warning: AlertTriangle,
+    success: ShieldCheck,
+    neutral: Shield,
+  }[status]
 
   return (
     <div
+      role="img"
+      aria-label={getHealthStatusLabel(status)}
       className={cn(
         "relative flex shrink-0 items-center justify-center rounded-full border shadow-inner transition-colors",
         sizeClasses[size],
@@ -45,19 +66,11 @@ export function HealthShield({
         className
       )}
     >
-      {/* Exclamation for danger/warning, Checkmark for success */}
-      {status === "success" && (
-        <ShieldCheck className={iconSizeClasses[size]} strokeWidth={2.5} />
-      )}
-      {status === "danger" && (
-        <ShieldAlert className={iconSizeClasses[size]} strokeWidth={2.5} />
-      )}
-      {status === "warning" && (
-        <ShieldAlert className={iconSizeClasses[size]} strokeWidth={2.5} />
-      )}
-      {status === "neutral" && (
-        <Shield className={iconSizeClasses[size]} strokeWidth={2} />
-      )}
+      <StatusIcon
+        className={iconSizeClasses[size]}
+        strokeWidth={status === "neutral" ? 2 : 2.5}
+        aria-hidden="true"
+      />
     </div>
   )
 }
