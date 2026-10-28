@@ -11,15 +11,41 @@ interface HealthShieldProps {
   className?: string
 }
 
-export function getHealthStatusLabel(status: HealthStatus): string {
-  const labels: Record<HealthStatus, string> = {
-    danger: "High risk; needs attention",
-    warning: "Needs attention",
-    success: "Healthy; no warnings",
-    neutral: "Health status unknown",
-  }
+// Spoken/announced wording: a full sentence fragment for screen readers.
+const STATUS_DESCRIPTIONS: Record<HealthStatus, string> = {
+  danger: "High risk; needs attention",
+  warning: "Needs attention",
+  success: "Healthy; no warnings",
+  neutral: "Health status unknown",
+}
 
-  return labels[status]
+// Short wording for the visible label printed next to the shield.
+const STATUS_LABELS: Record<HealthStatus, string> = {
+  danger: "High risk",
+  warning: "Needs attention",
+  success: "Healthy",
+  neutral: "Status unknown",
+}
+
+// Text colours for that visible label, kept darker/lighter than the badge fill
+// so the label itself stays above 4.5:1 against the card in both themes.
+const STATUS_TEXT_STYLES: Record<HealthStatus, string> = {
+  danger: "text-red-700 dark:text-red-400",
+  warning: "text-amber-700 dark:text-amber-400",
+  success: "text-emerald-700 dark:text-emerald-400",
+  neutral: "text-muted-foreground",
+}
+
+export function getHealthStatusLabel(status: HealthStatus): string {
+  return STATUS_DESCRIPTIONS[status]
+}
+
+export function getHealthStatusText(status: HealthStatus): string {
+  return STATUS_LABELS[status]
+}
+
+export function getHealthStatusTextClassName(status: HealthStatus): string {
+  return STATUS_TEXT_STYLES[status]
 }
 
 export function HealthShield({
@@ -39,15 +65,21 @@ export function HealthShield({
     lg: "size-6",
   }
 
-  const statusStyles = {
+  // Solid fills keep the badge itself above the 3:1 graphical-object contrast
+  // minimum against the card in both themes; the glyph and ring take the
+  // opposite tone so the shape reads even when colour is not perceived.
+  const statusStyles: Record<HealthStatus, string> = {
     danger:
-      "bg-red-100 text-red-800 border-red-800 dark:bg-red-950 dark:text-red-200 dark:border-red-200",
+      "border-red-700 bg-red-600 text-white dark:border-red-400 dark:bg-red-500 dark:text-neutral-950",
     warning:
-      "bg-amber-100 text-amber-900 border-amber-900 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-200",
+      "border-amber-700 bg-amber-700 text-white dark:border-amber-300 dark:bg-amber-400 dark:text-neutral-950",
     success:
-      "bg-emerald-100 text-emerald-900 border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-200",
-    neutral: "bg-muted text-foreground border-foreground",
+      "border-emerald-700 bg-emerald-700 text-white dark:border-emerald-300 dark:bg-emerald-400 dark:text-neutral-950",
+    neutral:
+      "border-neutral-500 bg-neutral-500 text-white dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-950",
   }
+
+  // A different silhouette per status so the meaning survives without colour.
   const StatusIcon = {
     danger: ShieldAlert,
     warning: AlertTriangle,

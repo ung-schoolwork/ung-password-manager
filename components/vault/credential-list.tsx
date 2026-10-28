@@ -16,6 +16,8 @@ import {
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
 import {
   getHealthStatusLabel,
+  getHealthStatusText,
+  getHealthStatusTextClassName,
   HealthShield,
 } from "@/components/vault/health-shield"
 import {
@@ -23,6 +25,7 @@ import {
   type CredentialHealthReport,
 } from "@/lib/vault/health"
 import type { Credential } from "@/lib/vault/types"
+import { cn } from "@/lib/utils"
 
 export function CredentialList({
   credentials,
@@ -134,10 +137,18 @@ function CredentialRow({
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <Link
           aria-label={`Password health for ${credential.accountName}: ${getHealthStatusLabel(status)}`}
-          className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="flex shrink-0 items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           href="/health"
         >
           <HealthShield status={status} size="sm" />
+          <span
+            className={cn(
+              "text-xs font-medium",
+              getHealthStatusTextClassName(status)
+            )}
+          >
+            {getHealthStatusText(status)}
+          </span>
         </Link>
 
         <dl className="min-w-0 flex-1">
