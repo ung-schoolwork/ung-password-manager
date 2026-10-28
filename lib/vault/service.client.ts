@@ -170,7 +170,6 @@ export class VaultService {
   }
 
   async saveCredential(draft: CredentialDraft): Promise<Credential> {
-    const { data } = this.requireUnlocked()
     const normalized = validateCredentialDraft(draft)
     const timestamp = this.dependencies.now().toISOString()
     const credential: Credential = {
@@ -181,12 +180,21 @@ export class VaultService {
       passwordUpdatedAt: timestamp,
     }
 
-    await this.persist({
-      ...data,
-      credentials: [credential, ...data.credentials],
-    })
-
-    return { ...credential }
+    for (let attempt = 1; ; attempt++) {
+      const { data } = this.requireUnlocked()
+      try {
+        await this.persist({
+          ...data,
+          credentials: [credential, ...data.credentials],
+        })
+        return { ...credential }
+      } catch (error) {
+        if (!(error instanceof VaultConflictError) || this.data === data)
+          throw error
+        if (attempt === UPDATE_ATTEMPTS) throw new VaultBusyError()
+        await this.refresh()
+      }
+    }
   }
 
   /**
