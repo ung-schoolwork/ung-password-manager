@@ -2,14 +2,20 @@ import type { Page } from "@playwright/test"
 
 import { expect, test } from "./fixtures"
 import { registerAccount } from "./account-helpers"
+import { CLIPBOARD_CLEAR_MS } from "./clipboard-clear-timing"
 
 const vaultPassword = "correct horse battery staple"
 const credentialPassword = "OriginalDemo!123456"
 
-// Matches NEXT_PUBLIC_CLIPBOARD_CLEAR_MS set in playwright.config.ts's
-// webServer.env so this test doesn't have to wait out the real 15s delay.
-const CLEAR_MS = 1500
+// Shared with playwright.config.ts through clipboard-clear-timing.ts, so the
+// delay the app runs with and the deadline the tests wait for cannot drift.
 const SAFETY_MARGIN_MS = 1000
+
+// The second copy in the stale-timer test lands just past this share of the
+// delay, leaving the first deadline and the second one on either side of the
+// assertion.
+const SECOND_COPY_FRACTION = 0.65
+const FIRST_DEADLINE_MARGIN_MS = 400
 
 test.beforeEach(async ({ page }) => {
   await registerAccount(page)
@@ -32,6 +38,10 @@ async function createVaultWithCredential(page: Page) {
   ).toBeVisible()
 }
 
+function readClipboard(page: Page) {
+  return page.evaluate(() => navigator.clipboard.readText())
+}
+
 async function copyPassword(page: Page) {
   const savedCredential = page
     .getByRole("list", { name: "Saved credentials" })
@@ -41,9 +51,12 @@ async function copyPassword(page: Page) {
   await expect(savedCredential.getByRole("status")).toHaveText(
     "Password copied."
   )
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    credentialPassword
-  )
+  expect(await readClipboard(page)).toBe(credentialPassword)
+}
+
+async function waitUntil(page: Page, timestamp: number) {
+  const remaining = timestamp - Date.now()
+  if (remaining > 0) await page.waitForTimeout(remaining)
 }
 
 test("clears the clipboard after the timer when the user locks the vault", async ({
@@ -57,8 +70,11 @@ test("clears the clipboard after the timer when the user locks the vault", async
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
 
-  await page.waitForTimeout(CLEAR_MS + SAFETY_MARGIN_MS)
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("")
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2,
+    })
+    .toBe("")
 })
 
 test("clears the clipboard after the timer when the user signs out", async ({
@@ -68,12 +84,13 @@ test("clears the clipboard after the timer when the user signs out", async ({
   await copyPassword(page)
 
   await page.getByRole("button", { name: "Sign out" }).click()
-  await expect(
-    page.getByRole("heading", { name: "Sign in" })
-  ).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible()
 
-  await page.waitForTimeout(CLEAR_MS + SAFETY_MARGIN_MS)
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("")
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2,
+    })
+    .toBe("")
 })
 
 test("clears the clipboard after the timer when the user opens Edit", async ({
@@ -87,8 +104,11 @@ test("clears the clipboard after the timer when the user opens Edit", async ({
     page.getByRole("dialog", { name: "Edit credential" })
   ).toBeVisible()
 
-  await page.waitForTimeout(CLEAR_MS + SAFETY_MARGIN_MS)
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("")
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2,
+    })
+    .toBe("")
 })
 
 test("clears the clipboard after the timer when the user leaves the vault page", async ({
@@ -100,8 +120,49 @@ test("clears the clipboard after the timer when the user leaves the vault page",
   await page.getByRole("link", { name: "Generator" }).click()
   await expect(page).toHaveURL(/\/generate$/)
 
-  await page.waitForTimeout(CLEAR_MS + SAFETY_MARGIN_MS)
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("")
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2,
+    })
+    .toBe("")
+})
+
+test("clears the clipboard on the second deadline when the same password is copied again", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+  const firstCopiedAt = Date.now()
+
+  // Leave the copy buttons the way the ticket's Edit flow does, then copy the
+  // same password from the freshly mounted instance.
+  await page.getByRole("button", { name: "Edit University email" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Edit credential" })
+  ).toBeVisible()
+  await page.getByRole("button", { name: "Cancel" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Edit credential" })
+  ).toBeHidden()
+
+  await waitUntil(
+    page,
+    firstCopiedAt + CLIPBOARD_CLEAR_MS * SECOND_COPY_FRACTION
+  )
+  await copyPassword(page)
+
+  // Past the first timer's deadline, before the second one is due.
+  await waitUntil(
+    page,
+    firstCopiedAt + CLIPBOARD_CLEAR_MS + FIRST_DEADLINE_MARGIN_MS
+  )
+  expect(await readClipboard(page)).toBe(credentialPassword)
+
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS,
+    })
+    .toBe("")
 })
 
 test("leaves the clipboard alone if it no longer holds the copied value", async ({
@@ -120,8 +181,6 @@ test("leaves the clipboard alone if it no longer holds the copied value", async 
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
 
-  await page.waitForTimeout(CLEAR_MS + SAFETY_MARGIN_MS)
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    "something-else-entirely"
-  )
+  await page.waitForTimeout(CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS)
+  expect(await readClipboard(page)).toBe("something-else-entirely")
 })

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test"
 
+import { CLIPBOARD_CLEAR_MS } from "./tests/e2e/clipboard-clear-timing"
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -16,7 +18,7 @@ export default defineConfig({
     env: {
       APP_ORIGIN: "http://127.0.0.1:3100",
       AUTH_TRUSTED_IP_HEADER: "x-e2e-client-ip",
-      NEXT_PUBLIC_CLIPBOARD_CLEAR_MS: "1500",
+      NEXT_PUBLIC_CLIPBOARD_CLEAR_MS: String(CLIPBOARD_CLEAR_MS),
     },
     url: "http://127.0.0.1:3100",
     reuseExistingServer: false,
