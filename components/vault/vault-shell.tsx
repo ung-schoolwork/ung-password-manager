@@ -18,9 +18,16 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/vault", label: "Vault" },
   { href: "/generate", label: "Generator" },
   { href: "/health", label: "Health" },
+  { href: "/settings", label: "Settings" },
 ]
 
-export function VaultShell({ children }: { children: React.ReactNode }) {
+export function VaultShell({
+  children,
+  showLock = true,
+}: {
+  children: React.ReactNode
+  showLock?: boolean
+}) {
   const { lockVault } = useVault()
   const pathname = usePathname()
 
@@ -41,7 +48,7 @@ export function VaultShell({ children }: { children: React.ReactNode }) {
           </Link>
 
           <nav aria-label="Primary">
-            <ul className="flex items-center gap-1">
+            <ul className="flex flex-wrap items-center gap-1">
               {NAV_ITEMS.map((item) => {
                 const active =
                   pathname === item.href || pathname.startsWith(`${item.href}/`)
@@ -68,15 +75,20 @@ export function VaultShell({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <Button
-              className="h-9 px-3 text-sm"
-              type="button"
-              variant="outline"
-              onClick={lockVault}
-            >
-              <Lock className="size-4" aria-hidden="true" />
-              <span className="hidden sm:inline">Lock vault</span>
-            </Button>
+            {showLock ? (
+              <Button
+                className="h-9 px-3 text-sm"
+                type="button"
+                variant="outline"
+                aria-label="Lock vault"
+                onClick={lockVault}
+              >
+                <Lock className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline" aria-hidden="true">
+                  Lock vault
+                </span>
+              </Button>
+            ) : null}
           </div>
         </div>
       </header>

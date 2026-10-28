@@ -1,14 +1,7 @@
 import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [
-    "**.com",
-    "**.dev",
-    "**.app",
-    "**.io",
-    "**.net",
-    "**.org",
-  ],
+  serverExternalPackages: ["mongoose"],
 }
 
 export default nextConfig

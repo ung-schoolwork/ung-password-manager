@@ -143,9 +143,14 @@ test("a change on one approved device appears on another", async ({
   ).toBeVisible({ timeout: 15_000 })
   await unlock(second.page)
 
-  // Close the account menu that is still open from approving the device.
-  await page.keyboard.press("Escape")
-  await page.getByRole("button", { name: "Add credential" }).first().click()
+  // Return to the vault after approving from Settings.
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Vault", exact: true })
+    .click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
   await page.getByLabel("Account label").fill("Synced account")
   await page.getByLabel("Website or app").fill("sync.example.test")
   await page.getByLabel("Username", { exact: true }).fill("sync-user")
@@ -169,7 +174,6 @@ test("saving an edit after another device changed the credential reports a confl
   browser,
 }) => {
   test.setTimeout(60_000)
-
   const account = await firstDevice(page)
   const second = await secondDevice(browser, account.email)
   await approve(page, await approvalCode(second.page))
@@ -178,8 +182,14 @@ test("saving an edit after another device changed the credential reports a confl
   ).toBeVisible({ timeout: 15_000 })
   await unlock(second.page)
 
-  await page.keyboard.press("Escape")
-  await page.getByRole("button", { name: "Add credential" }).first().click()
+  // Return to the vault after approving from Settings.
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Vault", exact: true })
+    .click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
   await page.getByLabel("Account label").fill("Shared login")
   await page.getByLabel("Website or app").fill("shared.example.test")
   await page.getByLabel("Username", { exact: true }).fill("shared-user")
@@ -235,6 +245,9 @@ test("saving an edit after another device changed the credential reports a confl
   // The first device receives the second device's notes with its own password.
   await expect(async () => {
     await checkNow(page)
+    await expect(
+      page.getByText("Edited on the second device", { exact: true })
+    ).toBeVisible()
     await page.getByRole("button", { name: "Edit Shared login" }).click()
     const latest = page.getByRole("dialog", { name: "Edit credential" })
     try {
@@ -264,19 +277,26 @@ test("a removed device loses access and goes back to waiting for approval", asyn
   ).toBeVisible({ timeout: 15_000 })
   await unlock(second.page)
 
-  // The account menu is still open from approving the device above.
-  const own = page.getByRole("listitem").filter({ hasText: "This device" })
+  // The settings page still shows the approved devices after approval.
+  const deviceList = page.getByRole("list", { name: "Approved devices" })
+  const own = deviceList
+    .getByRole("listitem")
+    .filter({ hasText: "This device" })
   await expect(own).toBeVisible()
   expect(await own.getByRole("button").count()).toBe(0)
+  const other = deviceList
+    .getByRole("listitem")
+    .filter({ hasNotText: "This device" })
+  await expect(other).toHaveCount(1)
   // Removing asks for confirmation, and cancelling keeps the device.
-  await page.getByRole("button", { name: /^Remove / }).click()
+  await other.getByRole("button", { name: /^Remove / }).click()
   const confirm = page.getByRole("group", { name: /^Confirm removing / })
   await expect(confirm).toBeVisible()
   await confirm.getByRole("button", { name: "Cancel", exact: true }).click()
   await expect(confirm).toHaveCount(0)
   expect((await second.context.request.get("/api/vault")).status()).toBe(200)
 
-  await page.getByRole("button", { name: /^Remove / }).click()
+  await other.getByRole("button", { name: /^Remove / }).click()
   await confirm
     .getByRole("button", { name: "Remove device", exact: true })
     .click()
