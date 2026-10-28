@@ -53,11 +53,7 @@ function AccountScreen({ children }: { children: ReactNode }) {
   return (
     <div>
       <div className="flex items-center justify-end gap-3 border-b px-5 py-2 sm:px-8">
-        <AccountMenu
-          key={session.user.id}
-          accountId={session.user.id}
-          email={session.user.email}
-        />
+        <AccountMenu key={session.user.id} email={session.user.email} />
         <Button
           type="button"
           variant="outline"
