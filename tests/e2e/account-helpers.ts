@@ -48,7 +48,10 @@ export async function approvalCode(page: Page) {
 
 /** Approves a waiting device's code from an already approved device. */
 export async function approve(page: Page, code: string) {
-  await page.getByRole("button", { name: "Signed-in account" }).click()
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Settings", exact: true })
+    .click()
   await page.getByLabel("Add a device").fill(code)
   await page.getByRole("button", { name: "Approve device" }).click()
 }

@@ -19,7 +19,9 @@ app/                 routes only - each page.tsx renders one component
   page.tsx           redirects to /vault
   vault/page.tsx     the vault: saved credentials and the add-credential form
   generate/page.tsx  the standalone password generator
+  settings/page.tsx  account details and approved devices
 components/vault/    everything specific to this app
+components/settings/ account and device settings
 components/ui/       vendored shadcn/ui primitives - generated, not written by us
 lib/vault/           vault logic: validation, encryption, storage, service
 lib/password-generator.ts   password generation
@@ -41,11 +43,11 @@ The browser repository remembers the revision loaded with the encrypted envelope
 
 ## Approved devices and sync
 
-Each browser is identified by a long-lived, HttpOnly device cookie and registered against the signed-in account. The first device on an account is approved automatically. Every later device shows an eight-digit approval code, valid for ten minutes, and cannot read, write, or poll the vault until an approved device enters that code from the account menu. Approval attempts are rate-limited per account.
+Each browser is identified by a long-lived, HttpOnly device cookie and registered against the signed-in account. The first device on an account is approved automatically. Every later device shows an eight-digit approval code, valid for ten minutes, and cannot read, write, or poll the vault until an approved device enters that code on the Settings page. Approval attempts are rate-limited per account.
 
 `/api/vault` and `/api/vault/revision` return 403 to unapproved devices. An open vault polls the revision every 15 seconds and when the tab regains focus. When another device has saved a newer revision, the browser fetches it and decrypts it with the vault password held by the unlocked session, and a save built on the replaced data is rejected as a conflict instead of overwriting it.
 
-`/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
+`/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms on the Settings page. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
 
 ## Development
 
