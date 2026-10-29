@@ -30,6 +30,11 @@ export async function createVault(page: Page) {
   ).toBeVisible()
 }
 
+export async function unlockVault(page: Page) {
+  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
+  await page.getByRole("button", { name: "Unlock vault" }).click()
+}
+
 /** Reads the code a signed-in but unapproved device shows while it waits. */
 export async function approvalCode(page: Page) {
   await expect(
