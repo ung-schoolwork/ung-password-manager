@@ -39,8 +39,14 @@ export function ImportCredentialsDialog({
   const [parseResult, setParseResult] = useState<ImportParseResult | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
+  // Bumped every time the dialog resets (including on close). An in-flight
+  // import captures the current value and checks it again once onImport
+  // resolves, so a close-while-importing can't resurrect stale UI state
+  // after the dialog has already been reset.
+  const importGenerationRef = useRef(0)
 
   function reset() {
+    importGenerationRef.current += 1
     setStep("select")
     setParseResult(null)
     setFileError(null)
@@ -96,16 +102,23 @@ export function ImportCredentialsDialog({
       .filter((row) => row.status === "ok")
       .map((row) => (row as { data: CredentialDraft }).data)
 
+    const generation = importGenerationRef.current
     setStep("importing")
 
+    let result: ImportOutcome
     try {
-      const result = await onImport(credentials)
-      setOutcome(result)
+      result = await onImport(credentials)
     } catch {
-      setOutcome({ succeeded: 0, failed: credentials.length })
-    } finally {
-      setStep("result")
+      result = { succeeded: 0, failed: credentials.length }
     }
+
+    // The dialog was closed (and reset) while this import was running. Let
+    // it keep running to completion in the background, but don't show its
+    // result in what is now a fresh dialog.
+    if (importGenerationRef.current !== generation) return
+
+    setOutcome(result)
+    setStep("result")
   }
 
   return (
