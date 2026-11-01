@@ -9,6 +9,7 @@ import {
   ImportCredentialsDialog,
   type ImportOutcome,
 } from "@/components/vault/import-credentials-dialog"
+import { IncomingShares } from "@/components/vault/incoming-shares"
 import { useVault } from "@/components/vault/vault-provider"
 import type { Credential, CredentialDraft } from "@/lib/vault/types"
 
@@ -41,7 +42,8 @@ export function VaultWorkspace() {
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-4">
+      <IncomingShares />
       <CredentialList
         credentials={credentials}
         onAddCredential={() => setAddOpen(true)}
@@ -64,6 +66,6 @@ export function VaultWorkspace() {
         onOpenChange={setImportOpen}
         onImport={handleImport}
       />
-    </>
+    </div>
   )
 }
