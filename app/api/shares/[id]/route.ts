@@ -4,6 +4,7 @@ import {
   json,
   originAllowed,
 } from "@/lib/auth/server"
+import { currentApprovedDevice } from "@/lib/devices/server"
 import { removeShare, ShareNotFoundError } from "@/lib/sharing/server"
 
 export const runtime = "nodejs"
@@ -16,6 +17,8 @@ export async function DELETE(
   try {
     const user = await authenticatedUser(request)
     if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
     const { id } = await params
     await removeShare(id, user.id)
     return json({ ok: true })

@@ -4,6 +4,7 @@ import {
   json,
   originAllowed,
 } from "@/lib/auth/server"
+import { currentApprovedDevice } from "@/lib/devices/server"
 import {
   createShare,
   listPendingShares,
@@ -24,6 +25,8 @@ export async function GET(request: Request) {
   try {
     const user = await authenticatedUser(request)
     if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
     return json({ shares: await listPendingShares(user.id) })
   } catch {
     return failure()
@@ -35,6 +38,8 @@ export async function POST(request: Request) {
   try {
     const user = await authenticatedUser(request)
     if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
 
     const body = await readBody(request)
     if (!body) return json({ error: "Invalid request" }, 400)

@@ -1,5 +1,11 @@
 import type { Browser, Page } from "@playwright/test"
-import { createVault, registerAccount, unlockVault } from "./account-helpers"
+import {
+  accountPassword,
+  approvalCode,
+  createVault,
+  registerAccount,
+  unlockVault,
+} from "./account-helpers"
 import { expect, setTestClientIp, test } from "./fixtures"
 
 const origin = "http://127.0.0.1:3100"
@@ -133,6 +139,65 @@ test("the API rejects sharing a credential with yourself or with an unknown acco
     },
   })
   expect(missing.status()).toBe(404)
+})
+
+test("a signed-in device that has not been approved cannot list, create, or respond to shares", async ({
+  page,
+  browser,
+}) => {
+  await accountWithVault(page)
+  const recipient = await secondAccountWithVault(browser)
+  await addCredential(page, "Unapproved device share")
+  await shareWith(page, "Unapproved device share", recipient.account.email)
+
+  // The recipient signs in on a new browser that no approved device has let in.
+  const context = await browser.newContext()
+  await setTestClientIp(context)
+  const unapproved = await context.newPage()
+  await unapproved.goto("/sign-in")
+  await unapproved
+    .getByLabel("Email", { exact: true })
+    .fill(recipient.account.email)
+  await unapproved
+    .getByLabel("Account password", { exact: true })
+    .fill(accountPassword)
+  await unapproved.getByRole("button", { name: "Sign in", exact: true }).click()
+  await approvalCode(unapproved)
+
+  const list = await context.request.get("/api/shares")
+  expect(list.status()).toBe(403)
+  expect(await list.text()).not.toContain("shared-credential-password-123")
+
+  const create = await context.request.post("/api/shares", {
+    headers: { Origin: origin },
+    data: {
+      recipientEmail: `nobody-${crypto.randomUUID()}@example.test`,
+      credential: {
+        accountName: "x",
+        siteOrApp: "x.test",
+        username: "x",
+        password: "x",
+      },
+    },
+  })
+  expect(create.status()).toBe(403)
+
+  const pending = await recipient.page.request.get("/api/shares")
+  expect(pending.status()).toBe(200)
+  const { shares } = (await pending.json()) as { shares: { id: string }[] }
+  expect(shares).toHaveLength(1)
+
+  const respond = await context.request.delete(`/api/shares/${shares[0].id}`, {
+    headers: { Origin: origin },
+  })
+  expect(respond.status()).toBe(403)
+
+  // The share is still waiting for the recipient's approved device.
+  const after = await recipient.page.request.get("/api/shares")
+  expect(((await after.json()) as { shares: unknown[] }).shares).toHaveLength(1)
+
+  await context.close()
+  await recipient.context.close()
 })
 
 test("an unauthenticated request cannot list, create, or respond to shares", async ({
