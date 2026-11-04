@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { useRef, useState, type FormEvent } from "react"
 import {
   ChevronDown,
   Eye,
@@ -78,7 +78,17 @@ export function CredentialForm({
   onCancel,
   onSaved,
 }: CredentialFormProps) {
-  const { addCredential, updateCredential, busy } = useVault()
+  const { credentials, addCredential, updateCredential, busy } = useVault()
+  const initialCredentialSnapshot = useRef(
+    credentials
+      .map(({ id, updatedAt }) => `${id}:${updatedAt}`)
+      .sort()
+      .join("\0")
+  ).current
+  const currentCredentialSnapshot = credentials
+    .map(({ id, updatedAt }) => `${id}:${updatedAt}`)
+    .sort()
+    .join("\0")
   const [draft, setDraft] = useState<CredentialDraft>(() =>
     credential ? toDraft(credential) : EMPTY_DRAFT
   )
@@ -157,6 +167,12 @@ export function CredentialForm({
       if (credential) {
         await updateCredential(credential.id, draft, editBase?.updatedAt)
       } else {
+        if (currentCredentialSnapshot !== initialCredentialSnapshot) {
+          setMessage(
+            "Your vault changed. Refresh the page and unlock it before saving again."
+          )
+          return
+        }
         await addCredential(draft)
         setDraft(EMPTY_DRAFT)
       }

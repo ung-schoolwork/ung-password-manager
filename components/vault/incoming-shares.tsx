@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Check, Inbox, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -23,13 +23,20 @@ export function IncomingShares() {
   const [shares, setShares] = useState<IncomingShare[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const refreshVersion = useRef(0)
 
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current
     try {
-      setShares(await listIncomingShares())
-      setError(null)
+      const latestShares = await listIncomingShares()
+      if (version === refreshVersion.current) {
+        setShares(latestShares)
+        setError(null)
+      }
     } catch {
-      setError("Could not check for shared credentials.")
+      if (version === refreshVersion.current) {
+        setError("Could not check for shared credentials.")
+      }
     }
   }, [])
 
@@ -39,6 +46,7 @@ export function IncomingShares() {
   }, [refresh])
 
   async function handleAccept(share: IncomingShare) {
+    refreshVersion.current++
     setBusyId(share.id)
     try {
       await addCredential(share.credential)
