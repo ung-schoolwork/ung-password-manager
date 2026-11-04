@@ -24,9 +24,13 @@ const CLEAR_AFTER_MS = clearAfterMs()
 // from any credential or from the generator replaces the pending clear
 // instead of racing it, so an older timer can never wipe a value the user
 // copied afterwards.
+//
+// The timer can outlive the vault, so it must never hold the copied value
+// itself (SCRUM-64): only a digest is kept, and nothing the timer closes over
+// may reference the plaintext.
 let pendingClear: {
   timer: ReturnType<typeof setTimeout>
-  value: string
+  digest: string
   sequence: number
 } | null = null
 let copySequence = 0
@@ -37,9 +41,20 @@ function cancelPendingClear() {
   pendingClear = null
 }
 
+async function digestOf(text: string): Promise<string> {
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text)
+  )
+  return Array.from(new Uint8Array(hash), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("")
+}
+
 // Copies `value` and schedules it to be cleared. Rejects if the browser
 // refuses the copy. `onCleared` runs only if the clipboard was actually
-// cleared; the component that copied may have unmounted by then.
+// cleared; the component that copied may have unmounted by then, so it must
+// not capture the copied value either.
 export async function copyWithAutoClear(
   value: string,
   onCleared?: () => void
@@ -51,6 +66,12 @@ export async function copyWithAutoClear(
   cancelPendingClear()
   const sequence = ++copySequence
 
+  // Hash before arming the timer so the timer never needs the plaintext.
+  const digest = await digestOf(value)
+
+  // A newer copy may have landed while hashing; it owns the clipboard now.
+  if (sequence !== copySequence) return
+
   const timer = setTimeout(async () => {
     if (pendingClear?.sequence !== sequence) return
 
@@ -58,7 +79,8 @@ export async function copyWithAutoClear(
     // have copied something else in the meantime (SCRUM-24 AC).
     let stillOurs = true
     try {
-      stillOurs = (await navigator.clipboard.readText()) === value
+      stillOurs =
+        (await digestOf(await navigator.clipboard.readText())) === digest
     } catch {
       // Some browsers block reads; clearing anyway is safer than leaving a
       // credential sitting in the clipboard.
@@ -78,5 +100,5 @@ export async function copyWithAutoClear(
     }
   }, CLEAR_AFTER_MS)
 
-  pendingClear = { timer, value, sequence }
+  pendingClear = { timer, digest, sequence }
 }

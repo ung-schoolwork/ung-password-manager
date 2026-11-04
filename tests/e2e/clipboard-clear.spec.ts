@@ -275,3 +275,66 @@ test("leaves a generator password alone if the clipboard no longer holds it", as
   await page.waitForTimeout(CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS)
   expect(await readClipboard(page)).toBe("something-else-entirely")
 })
+
+
+// Takes a V8 heap snapshot (Chromium only) and reports whether `text` appears
+// anywhere in it.
+async function heapContains(page: Page, text: string) {
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    await cdp.send("HeapProfiler.enable")
+    await cdp.send("HeapProfiler.collectGarbage")
+    let snapshot = ""
+    cdp.on("HeapProfiler.addHeapSnapshotChunk", ({ chunk }) => {
+      snapshot += chunk
+    })
+    await cdp.send("HeapProfiler.takeHeapSnapshot", { reportProgress: false })
+    // The snapshot is JSON, so look for the escaped form of the text.
+    return snapshot.includes(JSON.stringify(text).slice(1, -1))
+  } finally {
+    await cdp.detach()
+  }
+}
+
+test("the pending clear keeps no plaintext copy of the copied password in memory", async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+
+  // Hold the auto-clear timer instead of letting it fire, so the pending clear
+  // is still alive (like a real one for up to the clear delay) while the heap
+  // is inspected. The handler is kept, as a real timer would keep it.
+  await page.addInitScript((clearMs: number) => {
+    const realSetTimeout = window.setTimeout.bind(window)
+    const held: unknown[] = []
+    window.setTimeout = ((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === clearMs) {
+        held.push(handler)
+        return 0
+      }
+      return realSetTimeout(handler, timeout, ...args)
+    }) as unknown as typeof window.setTimeout
+  }, CLIPBOARD_CLEAR_MS)
+
+  await openGenerator(page)
+  const copied = await copyGeneratedPassword(page)
+
+  // Control: while the generator is on screen the snapshot does see the
+  // password, so a clean snapshot below means something.
+  expect(await heapContains(page, copied)).toBe(true)
+
+  // Leave the generator without reloading, so its own state is gone and only
+  // the pending clear could still reference the password.
+  await page.goBack()
+  // The empty vault reopens its add dialog, which hides the rest of the page
+  // from the accessibility tree, hence includeHidden.
+  await expect(
+    page.getByRole("button", { name: "Lock vault", includeHidden: true })
+  ).toBeVisible()
+
+  expect(await heapContains(page, copied)).toBe(false)
+})
