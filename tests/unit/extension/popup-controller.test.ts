@@ -6,6 +6,7 @@ import type {
 } from "../../../extension/src/api"
 import {
   PopupController,
+  type PopupControllerOptions,
   type PopupView,
   type Send,
 } from "../../../extension/src/popup-controller"
@@ -141,7 +142,10 @@ const send = (async (request: ExtensionRequest) => {
   return answer()
 }) as Send
 
-function popup(tabUrl: string | null = null) {
+function popup(
+  tabUrl: string | null = null,
+  options: Partial<PopupControllerOptions> = {}
+) {
   const views: PopupView[] = []
   const controller = new PopupController({
     send,
@@ -150,6 +154,7 @@ function popup(tabUrl: string | null = null) {
     vaultPollMs: 5,
     deriveKeys,
     tabUrl,
+    ...options,
   })
   return { controller, views }
 }
@@ -216,6 +221,7 @@ describe("popup sign-in", () => {
       query: "",
       results: null,
       total: 5,
+      notice: null,
     })
     expect(JSON.stringify(vault)).not.toContain("secret-")
     controller.dispose()
@@ -268,6 +274,7 @@ describe("popup sign-in", () => {
       query: "",
       results: null,
       total: 0,
+      notice: null,
     })
     controller.dispose()
   })
@@ -432,5 +439,156 @@ describe("popup current site and search", () => {
     await controller.unlock(password)
     expect(controller.current).toMatchObject({ query: "", results: null })
     controller.dispose()
+  })
+})
+
+describe("popup fill", () => {
+  const pageUrl = "https://admin.portal.example.test/login"
+  let tab: { id: number; url: string | null } | null
+  let filled: { tabId: number; login: unknown }[]
+  let outcome: Awaited<ReturnType<PopupControllerOptions["fillPage"] & {}>>
+
+  beforeEach(() => {
+    tab = { id: 7, url: pageUrl }
+    filled = []
+    outcome = { username: true, password: true }
+  })
+
+  async function openVault() {
+    server.signedIn = true
+    server.approved = true
+    const result = popup(pageUrl, {
+      currentTab: async () => tab,
+      fillPage: async (tabId, login) => {
+        filled.push({ tabId, login })
+        return outcome
+      },
+    })
+    await result.controller.start()
+    await result.controller.unlock(password)
+    expect(result.controller.current.name).toBe("vault")
+    return result
+  }
+
+  const notice = (controller: PopupController) =>
+    controller.current.name === "vault" ? controller.current.notice : "hidden"
+
+  it("fills nothing until a login is chosen, then only that login", async () => {
+    const { controller, views } = await openVault()
+    expect(filled).toEqual([])
+
+    await controller.fill("c")
+    expect(filled).toEqual([
+      {
+        tabId: 7,
+        login: {
+          username: "student.portal",
+          password: "secret-c",
+          siteOrApp: "https://www.portal.example.test/login",
+        },
+      },
+    ])
+    expect(notice(controller)).toEqual({
+      text: "Filled your username and password.",
+      tone: "info",
+    })
+    // The password went to the page, never into what the popup shows.
+    expect(JSON.stringify(views)).not.toContain("secret-")
+    controller.dispose()
+  })
+
+  it("checks the tab again when filling and refuses another site", async () => {
+    const { controller } = await openVault()
+    tab = { id: 7, url: "https://evil-portal.example.test/login" }
+    await controller.fill("c")
+    expect(filled).toEqual([])
+    expect(notice(controller)).toEqual({
+      text: "This login is for portal.example.test, not evil-portal.example.test, so it wasn't filled.",
+      tone: "error",
+    })
+    controller.dispose()
+  })
+
+  it("refuses pages that are not secure or not websites", async () => {
+    const { controller } = await openVault()
+    const refused = {
+      "http://admin.portal.example.test/login":
+        "This page isn't secure, so the login wasn't filled.",
+      "chrome://newtab/": "Logins can only be filled on websites.",
+    }
+    for (const [url, text] of Object.entries(refused)) {
+      tab = { id: 7, url }
+      await controller.fill("c")
+      expect(notice(controller)).toEqual({ text, tone: "error" })
+    }
+    tab = null
+    await controller.fill("c")
+    expect(notice(controller)).toEqual({
+      text: "Logins can only be filled on websites.",
+      tone: "error",
+    })
+    expect(filled).toEqual([])
+    controller.dispose()
+  })
+
+  it("says which fields were filled on each step of a two-step sign-in", async () => {
+    const { controller } = await openVault()
+    const cases: [typeof outcome, string, "info" | "error"][] = [
+      [
+        { username: true, password: false },
+        "Filled your username. When the page asks for your password, open the extension and choose this login again.",
+        "info",
+      ],
+      [{ username: false, password: true }, "Filled your password.", "info"],
+      [
+        { username: false, password: false },
+        "No sign-in fields were found on this page.",
+        "error",
+      ],
+      [
+        { refused: true },
+        "This page couldn't be filled. Open the extension from the page you want to sign in to.",
+        "error",
+      ],
+      [
+        null,
+        "This page couldn't be filled. Open the extension from the page you want to sign in to.",
+        "error",
+      ],
+    ]
+    for (const [result, text, tone] of cases) {
+      outcome = result
+      await controller.fill("c")
+      expect(notice(controller)).toEqual({ text, tone })
+    }
+    controller.dispose()
+  })
+
+  it("does not fill a login after the vault was locked", async () => {
+    const { controller } = await openVault()
+    let release: () => void = () => undefined
+    const opened = popup(pageUrl, {
+      currentTab: () =>
+        new Promise((resolve) => {
+          release = () => resolve(tab)
+        }),
+      fillPage: async (tabId, login) => {
+        filled.push({ tabId, login })
+        return outcome
+      },
+    })
+    controller.dispose()
+    await opened.controller.start()
+    await opened.controller.unlock(password)
+    const filling = opened.controller.fill("c")
+    opened.controller.lock()
+    release()
+    await filling
+    expect(filled).toEqual([])
+    expect(opened.controller.current.name).toBe("unlock")
+    // Locked, there is nothing to fill.
+    await opened.controller.fill("c")
+    expect(filled).toEqual([])
+    opened.controller.dispose()
   })
 })

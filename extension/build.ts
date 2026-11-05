@@ -32,8 +32,17 @@ const result = await Bun.build({
   sourcemap: "linked",
   define: { __APP_ORIGIN__: JSON.stringify(appOrigin) },
 })
-if (!result.success) {
-  for (const log of result.logs) console.error(log)
+// Injected into a page only when the user fills a login. A classic script
+// (IIFE) so injecting it again into the same page does not redeclare names.
+const fillPage = await Bun.build({
+  entrypoints: [path.join(root, "src/fill-page.ts")],
+  outdir,
+  target: "browser",
+  format: "iife",
+})
+for (const build of [result, fillPage]) {
+  if (build.success) continue
+  for (const log of build.logs) console.error(log)
   process.exit(1)
 }
 
