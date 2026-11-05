@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto"
 import { ensureDevice, setDeviceCookie } from "@/lib/devices/server"
 import {
   connectAuth,
-  credentials,
+  accountInput,
   failure,
   HashBusyError,
-  hashPassword,
+  hashAuthKey,
   issueSession,
   json,
   limited,
@@ -18,16 +18,23 @@ export const runtime = "nodejs"
 export async function POST(request: Request) {
   if (!originAllowed(request)) return json({ error: "Forbidden" }, 403)
   try {
-    const input = await credentials(request)
-    if (!input) return json({ error: "Invalid credentials" }, 400)
+    const input = await accountInput(request)
+    // Registration also stores the new vault key, wrapped in the browser.
+    if (!input?.wrappedVaultKey)
+      return json({ error: "Invalid credentials" }, 400)
     await connectAuth()
     const limit = await limited(request, input.email)
     if (limit && "invalidSource" in limit)
       return json({ error: "Forbidden" }, 403)
     if (limit && "retryAfter" in limit) return throttled(limit.retryAfter)
     const salt = randomBytes(16).toString("hex")
-    const passwordHash = await hashPassword(input.password, salt)
-    const user = await User.create({ email: input.email, passwordHash, salt })
+    const authKeyHash = await hashAuthKey(input.authKey, salt)
+    const user = await User.create({
+      email: input.email,
+      authKeyHash,
+      salt,
+      wrappedVaultKey: input.wrappedVaultKey,
+    })
     try {
       const response = await issueSession(user, 201)
       const { deviceCookie } = await ensureDevice(request, String(user._id))

@@ -1,14 +1,16 @@
 import { describe, expect, it } from "bun:test"
 
 import {
+  createWrappedVaultKey,
   encryptVault,
+  rewrapVaultKey,
+  unwrapVaultKey,
   VaultUnlockError,
 } from "../../../lib/vault/crypto.client"
 import type { VaultRepository } from "../../../lib/vault/repository.client"
 import { VaultConflictError } from "../../../lib/vault/remote"
 import {
   CredentialConflictError,
-  VaultAlreadyExistsError,
   VaultBusyError,
   VaultService,
 } from "../../../lib/vault/service.client"
@@ -16,20 +18,35 @@ import {
   VAULT_DATA_VERSION,
   type Credential,
   type CredentialDraft,
-  type VaultEnvelopeV1,
+  type VaultEnvelope,
 } from "../../../lib/vault/types"
 import { CredentialValidationError } from "../../../lib/vault/validation"
 
+// Stands in for the key derived from the account password at sign-in.
+function createWrappingKey() {
+  return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
+    "wrapKey",
+    "unwrapKey",
+  ])
+}
+const wrappingKey = await createWrappingKey()
+const wrappedVaultKey = await createWrappedVaultKey(wrappingKey)
+const vaultKey = await unwrapVaultKey(wrappingKey, wrappedVaultKey)
+
 class MemoryVaultRepository implements VaultRepository {
-  envelope: VaultEnvelopeV1 | null = null
+  envelope: VaultEnvelope | null = null
+  wrappedVaultKey = wrappedVaultKey
   saveCalls = 0
   failNextSave = false
 
   async load() {
-    return this.envelope ? structuredClone(this.envelope) : null
+    return {
+      wrappedVaultKey: structuredClone(this.wrappedVaultKey),
+      envelope: this.envelope ? structuredClone(this.envelope) : null,
+    }
   }
 
-  async save(envelope: VaultEnvelopeV1) {
+  async save(envelope: VaultEnvelope) {
     this.saveCalls += 1
     if (this.failNextSave) {
       this.failNextSave = false
@@ -44,7 +61,6 @@ class MemoryVaultRepository implements VaultRepository {
   }
 }
 
-const passphrase = "a long vault password"
 const validDraft: CredentialDraft = {
   accountName: "Student portal",
   siteOrApp: "portal.example.edu",
@@ -61,8 +77,8 @@ const migratedCredential: Credential = {
 
 async function createEnvelope(
   credentials: Credential[] = [migratedCredential]
-): Promise<VaultEnvelopeV1> {
-  return encryptVault(passphrase, { version: VAULT_DATA_VERSION, credentials })
+): Promise<VaultEnvelope> {
+  return encryptVault(vaultKey, { version: VAULT_DATA_VERSION, credentials })
 }
 
 function createService(repository: VaultRepository, times?: string[]) {
@@ -77,7 +93,7 @@ describe("VaultService", () => {
   it("returns field-specific validation errors for missing required values", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
 
     try {
       await service.saveCredential({
@@ -101,12 +117,12 @@ describe("VaultService", () => {
   it("saves, locks, reloads, and unlocks an encrypted credential", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     await service.saveCredential(validDraft)
     service.lockVault()
 
     const reloadedService = createService(repository)
-    await reloadedService.unlockVault(passphrase)
+    await reloadedService.unlockVault(wrappingKey)
 
     expect(reloadedService.listCredentials()).toEqual([
       expect.objectContaining({
@@ -119,106 +135,58 @@ describe("VaultService", () => {
     )
   })
 
+  it("opens a new account's vault empty and stores it on the first save", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+
+    await service.unlockVault(wrappingKey)
+
+    expect(service.listCredentials()).toEqual([])
+    expect(repository.saveCalls).toBe(0)
+    await service.saveCredential(validDraft)
+    expect(repository.envelope).not.toBeNull()
+    expect(repository.saveCalls).toBe(1)
+  })
+
+  it("stays locked when the password does not match the account", async () => {
+    const repository = new MemoryVaultRepository()
+    repository.envelope = await createEnvelope()
+    const service = createService(repository)
+
+    await expect(
+      service.unlockVault(await createWrappingKey())
+    ).rejects.toBeInstanceOf(VaultUnlockError)
+
+    expect(service.isUnlocked()).toBe(false)
+    expect(() => service.listCredentials()).toThrow("Unlock the vault")
+  })
+
+  it("opens the same vault after its key is wrapped for a new password", async () => {
+    const repository = new MemoryVaultRepository()
+    repository.envelope = await createEnvelope()
+    const nextWrappingKey = await createWrappingKey()
+    repository.wrappedVaultKey = await rewrapVaultKey(
+      wrappedVaultKey,
+      wrappingKey,
+      nextWrappingKey
+    )
+    const service = createService(repository)
+
+    await service.unlockVault(nextWrappingKey)
+
+    expect(service.listCredentials()).toEqual([migratedCredential])
+  })
+
   it("does not mutate committed state when persistence fails", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     repository.failNextSave = true
 
     await expect(service.saveCredential(validDraft)).rejects.toThrow(
       "Storage unavailable"
     )
     expect(service.listCredentials()).toEqual([])
-  })
-
-  it("migrates an encrypted vault and preserves its credentials", async () => {
-    const repository = new MemoryVaultRepository()
-    const service = createService(repository)
-    const envelope = await createEnvelope()
-
-    await service.migrateVault(passphrase, envelope)
-
-    expect(service.listCredentials()).toEqual([migratedCredential])
-    expect(repository.envelope).toEqual(envelope)
-
-    const reloadedService = createService(repository)
-    await reloadedService.unlockVault(passphrase)
-    expect(reloadedService.listCredentials()).toEqual([migratedCredential])
-  })
-
-  it("does not save or unlock when a migrated vault has the wrong passphrase", async () => {
-    const repository = new MemoryVaultRepository()
-    const service = createService(repository)
-    const envelope = await createEnvelope()
-
-    await expect(
-      service.migrateVault("incorrect passphrase", envelope)
-    ).rejects.toBeInstanceOf(VaultUnlockError)
-
-    expect(repository.saveCalls).toBe(0)
-    expect(repository.envelope).toBeNull()
-    expect(service.isUnlocked()).toBe(false)
-  })
-
-  it("leaves an existing destination unchanged during migration", async () => {
-    const repository = new MemoryVaultRepository()
-    const existingEnvelope = await createEnvelope([])
-    repository.envelope = structuredClone(existingEnvelope)
-    const service = createService(repository)
-    const incomingEnvelope = await createEnvelope()
-
-    await expect(
-      service.migrateVault(passphrase, incomingEnvelope)
-    ).rejects.toBeInstanceOf(VaultAlreadyExistsError)
-
-    expect(repository.saveCalls).toBe(0)
-    expect(repository.envelope).toEqual(existingEnvelope)
-    expect(service.isUnlocked()).toBe(false)
-  })
-
-  it("remains locked when saving a migrated vault fails", async () => {
-    const repository = new MemoryVaultRepository()
-    repository.failNextSave = true
-    const service = createService(repository)
-    const envelope = await createEnvelope()
-
-    await expect(service.migrateVault(passphrase, envelope)).rejects.toThrow(
-      "Storage unavailable"
-    )
-
-    expect(repository.saveCalls).toBe(1)
-    expect(repository.envelope).toBeNull()
-    expect(service.isUnlocked()).toBe(false)
-    expect(() => service.listCredentials()).toThrow("Unlock the vault")
-  })
-
-  it("does not restore decrypted state when locked during migration", async () => {
-    const repository = new MemoryVaultRepository()
-    let release!: () => void
-    let started!: () => void
-    const saving = new Promise<void>((resolve) => {
-      started = resolve
-    })
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const originalSave = repository.save.bind(repository)
-    repository.save = async (envelope) => {
-      started()
-      await gate
-      await originalSave(envelope)
-    }
-    const service = createService(repository)
-    const envelope = await createEnvelope()
-    const migrating = service.migrateVault(passphrase, envelope)
-
-    await saving
-    service.lockVault()
-    release()
-    await expect(migrating).rejects.toThrow("Unlock the vault")
-
-    expect(service.isUnlocked()).toBe(false)
-    expect(() => service.listCredentials()).toThrow("Unlock the vault")
   })
 
   it("persists edited details and changes passwordUpdatedAt only for a new password", async () => {
@@ -228,7 +196,7 @@ describe("VaultService", () => {
       "2026-09-23T00:00:00.000Z",
       "2026-09-24T00:00:00.000Z",
     ])
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     const saved = await service.saveCredential(validDraft)
 
     const edited = await service.updateCredential(saved.id, {
@@ -247,7 +215,7 @@ describe("VaultService", () => {
 
     service.lockVault()
     const reloadedService = createService(repository)
-    await reloadedService.unlockVault(passphrase)
+    await reloadedService.unlockVault(wrappingKey)
     expect(reloadedService.listCredentials()).toEqual([
       expect.objectContaining({
         ...edited,
@@ -257,36 +225,10 @@ describe("VaultService", () => {
       }),
     ])
   })
-  it("does not restore decrypted state when locked during vault creation", async () => {
-    const repository = new MemoryVaultRepository()
-    let release!: () => void
-    let started!: () => void
-    const saving = new Promise<void>((resolve) => {
-      started = resolve
-    })
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const originalSave = repository.save.bind(repository)
-    repository.save = async (envelope) => {
-      started()
-      await gate
-      await originalSave(envelope)
-    }
-    const service = createService(repository)
-    const creating = service.createVault(passphrase)
-    await saving
-    service.lockVault()
-    release()
-    await expect(creating).rejects.toThrow("Unlock the vault")
-    expect(service.isUnlocked()).toBe(false)
-    expect(() => service.listCredentials()).toThrow("Unlock the vault")
-  })
-
   it("does not restore decrypted state when locked during an unlock", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     service.lockVault()
     let release!: () => void
     let started!: () => void
@@ -302,7 +244,7 @@ describe("VaultService", () => {
       await gate
       return originalLoad()
     }
-    const unlocking = service.unlockVault(passphrase)
+    const unlocking = service.unlockVault(wrappingKey)
     await loading
     service.lockVault()
     release()
@@ -313,7 +255,7 @@ describe("VaultService", () => {
   it("does not restore decrypted state when locked during a save", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     let release!: () => void
     let started!: () => void
     const saving = new Promise<void>((resolve) => {
@@ -339,7 +281,7 @@ describe("VaultService", () => {
   it("picks up credentials another device saved to the same vault", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     expect(service.listCredentials()).toEqual([])
 
     // Another approved device saves a credential to the shared vault.
@@ -352,7 +294,7 @@ describe("VaultService", () => {
   it("keeps the vault unlocked when a refresh cannot reach the saved vault", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     await service.saveCredential(validDraft)
     repository.load = async () => {
       throw new Error("offline")
@@ -366,7 +308,7 @@ describe("VaultService", () => {
   it("retries adding a credential when a refresh replaces its snapshot", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     repository.envelope = await createEnvelope([migratedCredential])
 
     const refreshing = service.refresh()
@@ -380,13 +322,14 @@ describe("VaultService", () => {
       expect.objectContaining({ id: "credential-1", ...validDraft }),
       migratedCredential,
     ])
-    expect(repository.saveCalls).toBe(2)
+    // The add built on the replaced snapshot never reached the repository.
+    expect(repository.saveCalls).toBe(1)
   })
 
   it("does not rebase a credential add after the server rejects a stale write", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
-    await service.createVault(passphrase)
+    await service.unlockVault(wrappingKey)
     repository.save = async () => {
       throw new VaultConflictError()
     }
@@ -401,7 +344,7 @@ describe("VaultService", () => {
     const repository = new MemoryVaultRepository()
     repository.envelope = await createEnvelope([])
     const service = createService(repository)
-    await service.unlockVault(passphrase)
+    await service.unlockVault(wrappingKey)
 
     // Every load queues the next refresh, so the saved vault changes faster
     // than a save attempt can be built from it. The retry limit is the only
@@ -458,14 +401,14 @@ describe("VaultService", () => {
       const repository = new MemoryVaultRepository()
       repository.envelope = await createEnvelope(credentials)
       const service = createService(repository)
-      await service.unlockVault(passphrase)
+      await service.unlockVault(wrappingKey)
       return { repository, service }
     }
     // The server rejects this device's next save because another device saved
     // first, as the remote repository does for an outdated revision.
     function rejectNextSaveWith(
       repository: MemoryVaultRepository,
-      envelope: VaultEnvelopeV1
+      envelope: VaultEnvelope
     ) {
       const save = repository.save.bind(repository)
       repository.save = async () => {
@@ -512,7 +455,7 @@ describe("VaultService", () => {
       )
       expect(service.listCredentials()).toEqual([newerOnOtherDevice])
       const reopened = createService(repository)
-      await reopened.unlockVault(passphrase)
+      await reopened.unlockVault(wrappingKey)
       expect(reopened.listCredentials()).toEqual([newerOnOtherDevice])
     })
 
@@ -530,7 +473,7 @@ describe("VaultService", () => {
       )
       expect(updated.notes).toBe("edited on this device")
       const reopened = createService(repository)
-      await reopened.unlockVault(passphrase)
+      await reopened.unlockVault(wrappingKey)
       expect(reopened.listCredentials()).toEqual([otherCredential, updated])
     })
 

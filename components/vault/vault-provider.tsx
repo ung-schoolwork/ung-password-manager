@@ -18,11 +18,7 @@ import {
   fetchVaultRevision,
   RemoteVaultRepository,
 } from "@/lib/vault/remote.client"
-import {
-  localVaultSources as findLocalVaultSources,
-  readLocalVault,
-  type LocalVaultSource,
-} from "@/lib/vault/local-migration.client"
+import { deriveAccountKeys } from "@/lib/vault/crypto.client"
 import {
   CredentialConflictError,
   VaultService,
@@ -30,7 +26,7 @@ import {
 import type { Credential, CredentialDraft } from "@/lib/vault/types"
 
 type VaultStatus =
-  "loading" | "device-pending" | "needs-setup" | "locked" | "unlocked" | "error"
+  "loading" | "device-pending" | "locked" | "unlocked" | "error"
 
 export const VAULT_POLL_INTERVAL_MS = 15_000
 const DEVICE_POLL_INTERVAL_MS = 3_000
@@ -42,10 +38,8 @@ interface VaultContextValue {
   initializationError: string | null
   /** The code to enter on an approved device while this device waits. */
   deviceCode: string | null
-  localVaultSources: LocalVaultSource[]
-  migrateVault(source: LocalVaultSource, passphrase: string): Promise<void>
-  createVault(passphrase: string): Promise<void>
-  unlockVault(passphrase: string): Promise<void>
+  /** Opens the vault with the account password. */
+  unlockVault(password: string): Promise<void>
   lockVault(): void
   addCredential(draft: CredentialDraft): Promise<Credential>
   updateCredential(
@@ -62,14 +56,20 @@ const unavailable = async () => {
   throw new Error("The vault is not available on this device yet.")
 }
 
+interface VaultAccount {
+  accountId: string
+  email: string
+  /** Derived at sign-in; opens the vault without asking for the password again. */
+  unlockKey: CryptoKey | null
+  onUnlockKeyUsed: () => void
+}
+
 // Holds the vault back until this browser is an approved device on the account.
 export function VaultProvider({
   children,
-  accountId,
-}: {
-  children: ReactNode
-  accountId: string
-}) {
+  ...account
+}: VaultAccount & { children: ReactNode }) {
+  const { accountId } = account
   const device = useQuery({
     queryKey: ["device", accountId],
     queryFn: registerThisDevice,
@@ -79,13 +79,14 @@ export function VaultProvider({
     refetchOnWindowFocus: (query) => query.state.data?.approved === false,
   })
   const { refetch } = device
+  const onDeviceRemoved = useCallback(() => void refetch(), [refetch])
 
   if (device.data?.approved) {
     return (
       <ApprovedVaultProvider
         key={device.data.deviceId}
-        accountId={accountId}
-        onDeviceRemoved={() => void refetch()}
+        {...account}
+        onDeviceRemoved={onDeviceRemoved}
       >
         {children}
       </ApprovedVaultProvider>
@@ -104,9 +105,6 @@ export function VaultProvider({
           ? "This device could not be checked. Refresh the page and try again."
           : null,
         deviceCode: pending?.code ?? null,
-        localVaultSources: [],
-        migrateVault: unavailable,
-        createVault: unavailable,
         unlockVault: unavailable,
         lockVault: () => undefined,
         addCredential: unavailable,
@@ -122,60 +120,34 @@ export function VaultProvider({
 function ApprovedVaultProvider({
   children,
   accountId,
+  email,
+  unlockKey,
+  onUnlockKeyUsed,
   onDeviceRemoved,
-}: {
+}: VaultAccount & {
   children: ReactNode
-  accountId: string
   onDeviceRemoved: () => void
 }) {
   const serviceRef = useRef<VaultService | null>(null)
-  const [status, setStatus] = useState<VaultStatus>("loading")
+  // With a key from sign-in the vault opens by itself; otherwise ask for the password.
+  const [status, setStatus] = useState<VaultStatus>(() =>
+    unlockKey ? "loading" : "locked"
+  )
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [busy, setBusy] = useState(false)
-  const [localVaultSources, setLocalVaultSources] = useState<
-    LocalVaultSource[]
-  >([])
   const [initializationError, setInitializationError] = useState<string | null>(
     null
   )
 
   useEffect(() => {
-    let active = true
-    const repository = new RemoteVaultRepository()
-    const service = new VaultService(repository)
+    const service = new VaultService(new RemoteVaultRepository())
     serviceRef.current = service
 
-    void service
-      .hasVault()
-      .then((hasVault) => {
-        if (!active) return
-        if (!hasVault) {
-          try {
-            setLocalVaultSources(
-              findLocalVaultSources(window.localStorage, accountId)
-            )
-          } catch {
-            // Remote vaults remain usable when local storage is unavailable.
-            setLocalVaultSources([])
-          }
-        }
-        setStatus(hasVault ? "locked" : "needs-setup")
-      })
-      .catch(() => {
-        if (!active) return
-        setInitializationError(
-          "Your saved vault could not be opened. Refresh the page and try again."
-        )
-        setStatus("error")
-      })
-
     return () => {
-      active = false
       service.lockVault()
       serviceRef.current = null
     }
   }, [accountId])
-
   // Pick up changes made on other approved devices while the vault is open.
   const revision = useQuery({
     queryKey: ["vault-revision", accountId],
@@ -247,61 +219,59 @@ function ApprovedVaultProvider({
     [accountId, queryClient]
   )
 
-  const createVault = useCallback(
-    async (passphrase: string) => {
-      const service = requireService()
-      setBusy(true)
-      try {
-        await service.createVault(passphrase)
-        if (serviceRef.current !== service) return
+  // Open the vault with the key derived when the user signed in, so signing
+  // in is the only time they enter their password.
+  useEffect(() => {
+    const service = serviceRef.current
+    if (!unlockKey || !service || service.isUnlocked()) return
+    let active = true
+    service
+      .unlockVault(unlockKey)
+      .then(async () => {
+        if (!active || serviceRef.current !== service) return
         refreshCredentials(service)
         await syncVaultRevision(service)
+        if (!active) return
         setStatus("unlocked")
-      } finally {
-        setBusy(false)
-      }
-    },
-    [refreshCredentials, requireService, syncVaultRevision]
-  )
+        onUnlockKeyUsed()
+      })
+      .catch((caught) => {
+        if (!active || serviceRef.current !== service) return
+        if (caught instanceof DeviceNotApprovedError) onDeviceRemoved()
+        setInitializationError(
+          "Your vault could not be opened. Enter your password to try again."
+        )
+        setStatus("locked")
+        onUnlockKeyUsed()
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    unlockKey,
+    onUnlockKeyUsed,
+    onDeviceRemoved,
+    refreshCredentials,
+    syncVaultRevision,
+  ])
 
-  const migrateVault = useCallback(
-    async (source: LocalVaultSource, passphrase: string) => {
-      const service = requireService()
-      setBusy(true)
-      try {
-        let storage: Storage
-        try {
-          storage = window.localStorage
-        } catch {
-          throw new Error("Your existing vault could not be opened.")
-        }
-        const envelope = readLocalVault(storage, accountId, source)
-        await service.migrateVault(passphrase, envelope)
-        if (serviceRef.current !== service) return
-        refreshCredentials(service)
-        await syncVaultRevision(service)
-        setStatus("unlocked")
-      } finally {
-        setBusy(false)
-      }
-    },
-    [accountId, refreshCredentials, requireService, syncVaultRevision]
-  )
   const unlockVault = useCallback(
-    async (passphrase: string) => {
+    async (password: string) => {
       const service = requireService()
       setBusy(true)
       try {
-        await service.unlockVault(passphrase)
+        const { wrappingKey } = await deriveAccountKeys(email, password)
+        await service.unlockVault(wrappingKey)
         if (serviceRef.current !== service) return
         refreshCredentials(service)
         await syncVaultRevision(service)
+        setInitializationError(null)
         setStatus("unlocked")
       } finally {
         setBusy(false)
       }
     },
-    [refreshCredentials, requireService, syncVaultRevision]
+    [email, refreshCredentials, requireService, syncVaultRevision]
   )
 
   const lockVault = useCallback(() => {
@@ -380,9 +350,6 @@ function ApprovedVaultProvider({
         busy,
         initializationError,
         deviceCode: null,
-        localVaultSources,
-        migrateVault,
-        createVault,
         unlockVault,
         lockVault,
         addCredential,

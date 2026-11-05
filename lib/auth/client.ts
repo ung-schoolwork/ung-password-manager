@@ -1,11 +1,20 @@
+import type { WrappedVaultKey } from "@/lib/vault/types"
+
 export interface AccountSession {
   user: { id: string; email: string }
   expiresAt: string
 }
 
+/** Sign-in details as sent to the server: never the password itself. */
+export interface AccountProof {
+  email: string
+  authKey: string
+  wrappedVaultKey?: WrappedVaultKey
+}
+
 export async function accountRequest<T>(
   path: string,
-  body?: { email: string; password: string } | Record<string, never>
+  body?: AccountProof | Record<string, never>
 ): Promise<T> {
   const response = await fetch(`/api/auth/${path}`, {
     method: body ? "POST" : "GET",

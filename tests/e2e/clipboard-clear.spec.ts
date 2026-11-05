@@ -1,10 +1,9 @@
 import type { Page } from "@playwright/test"
 
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
+import { registerAccount, unlockVault } from "./account-helpers"
 import { CLIPBOARD_CLEAR_MS } from "./clipboard-clear-timing"
 
-const vaultPassword = "correct horse battery staple"
 const credentialPassword = "OriginalDemo!123456"
 
 // Shared with playwright.config.ts through clipboard-clear-timing.ts, so the
@@ -27,9 +26,7 @@ async function createVaultWithCredential(
   password = credentialPassword
 ) {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
@@ -188,14 +185,12 @@ test("leaves the clipboard alone if it no longer holds the copied value", async 
   expect(await readClipboard(page)).toBe("something-else-entirely")
 })
 
-// The generator sits behind the vault, so create one and reach the page through
+// The generator sits behind the vault, so open it and reach the page through
 // the nav like a user would (the unlocked vault survives the client-side
 // navigation).
 async function openGenerator(page: Page) {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   // An empty vault opens the add dialog; close it to reach the navigation.
   await expect(

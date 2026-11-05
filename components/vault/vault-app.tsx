@@ -9,13 +9,16 @@ import { VaultShell } from "@/components/vault/vault-shell"
 
 export function VaultApp({
   children,
-  accountId,
+  ...account
 }: {
   children: ReactNode
   accountId: string
+  email: string
+  unlockKey: CryptoKey | null
+  onUnlockKeyUsed: () => void
 }) {
   return (
-    <VaultProvider accountId={accountId}>
+    <VaultProvider {...account}>
       <VaultScreen>{children}</VaultScreen>
     </VaultProvider>
   )
@@ -28,8 +31,7 @@ function VaultScreen({ children }: { children: ReactNode }) {
     pathname === "/settings" || pathname.startsWith("/settings/")
   // Settings manages the account and its approved devices, so it does not
   // need the vault itself to be unlocked.
-  const settingsAvailable =
-    settingsPage && (status === "locked" || status === "needs-setup")
+  const settingsAvailable = settingsPage && status === "locked"
 
   if (status !== "unlocked" && !settingsAvailable) return <VaultGate />
 

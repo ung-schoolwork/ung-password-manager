@@ -1,22 +1,38 @@
+import type { Page } from "@playwright/test"
 import { expect, test } from "./fixtures"
 import {
   accountPassword,
-  createVault,
+  openNewVault,
   registerAccount,
-  vaultPassword,
+  signIn,
+  unlockVault,
 } from "./account-helpers"
 
-async function signIn(page: import("@playwright/test").Page, email: string) {
-  await page.getByLabel("Email", { exact: true }).fill(email)
-  await page
-    .getByLabel("Account password", { exact: true })
-    .fill(accountPassword)
-  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+/** Records what the sign-in and registration forms send to the server. */
+function recordAccountRequests(page: Page) {
+  const bodies: string[] = []
+  page.on("request", (request) => {
+    if (/\/api\/auth\/(login|register)$/.test(request.url()))
+      bodies.push(request.postData() ?? "")
+  })
+  return bodies
 }
 
-test("registers and signs in separately from unlocking; sign-out clears private screens", async ({
+async function saveCredential(page: Page, name: string, username: string) {
+  await page.getByLabel("Account label").fill(name)
+  await page.getByLabel("Website or app").fill("private.example.test")
+  await page.getByLabel("Username", { exact: true }).fill(username)
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("private-password-789")
+  await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(page.getByText(name, { exact: true })).toBeVisible()
+}
+
+test("one password registers, signs in, and opens the vault; sign-out clears private screens", async ({
   page,
 }) => {
+  const sent = recordAccountRequests(page)
   const email = `registration-${crypto.randomUUID()}@example.test`
   await page.goto("/vault")
   await expect(
@@ -27,34 +43,26 @@ test("registers and signs in separately from unlocking; sign-out clears private 
     page.getByRole("heading", { name: "Create your account", exact: true })
   ).toBeVisible()
   await page.getByLabel("Email", { exact: true }).fill(email)
-  await page
-    .getByLabel("Account password", { exact: true })
-    .fill(accountPassword)
-  await page
-    .getByLabel("Confirm account password")
-    .fill("different-password-123")
+  await page.getByLabel("Password", { exact: true }).fill(accountPassword)
+  await page.getByLabel("Confirm password").fill("different-password-123")
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click()
   await expect(page.locator("form").getByRole("alert")).toHaveText(
-    "The account passwords do not match."
+    "The passwords do not match."
   )
-  await page.getByLabel("Confirm account password").fill(accountPassword)
+  await page.getByLabel("Confirm password").fill(accountPassword)
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click()
+  // Registration creates the vault and opens it: no second password prompt.
   await expect(
-    page.getByRole("heading", { name: "Create your vault" })
+    page.getByRole("dialog", { name: "Add a credential" })
   ).toBeVisible()
-  await createVault(page)
-  await page.getByLabel("Account label").fill("Private account")
-  await page.getByLabel("Website or app").fill("private.example.test")
-  await page.getByLabel("Username", { exact: true }).fill("private-user")
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("private-password-789")
-  await page.getByRole("button", { name: "Save credential" }).click()
-  await expect(page.getByText("Private account", { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Unlock your vault" })
+  ).toHaveCount(0)
+  await saveCredential(page, "Private account", "private-user")
   const beforeSignOut = await page.request.get("/api/auth/session")
   expect(beforeSignOut.status()).toBe(200)
   await page.getByRole("button", { name: "Sign out", exact: true }).click()
@@ -67,19 +75,54 @@ test("registers and signs in separately from unlocking; sign-out clears private 
     .toBe(401)
   await page.goBack()
   await expect(page.getByText("private-user", { exact: true })).toHaveCount(0)
+
+  await page.getByLabel("Email", { exact: true }).fill(email)
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("wrong-account-password")
+  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  await expect(page.locator("form").getByRole("alert")).toHaveText(
+    "Invalid credentials"
+  )
   await signIn(page, email)
+  // Signing in opens the vault directly.
+  await expect(page.getByText("private-user", { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Unlock your vault" })
+  ).toHaveCount(0)
+
+  // The server only ever saw a derived key, never the password.
+  expect(sent).toHaveLength(3)
+  for (const body of sent) {
+    const parsed = JSON.parse(body)
+    expect(parsed.authKey).toMatch(/^[0-9a-f]{64}$/)
+    expect(parsed).not.toHaveProperty("password")
+    expect(body).not.toContain(accountPassword)
+    expect(body).not.toContain("wrong-account-password")
+  }
+  expect(JSON.parse(sent[0]).wrappedVaultKey).toBeTruthy()
+  expect(JSON.parse(sent[2]).authKey).toBe(JSON.parse(sent[0]).authKey)
+  expect(JSON.parse(sent[1]).authKey).not.toBe(JSON.parse(sent[0]).authKey)
+  const stored = await (await page.request.get("/api/vault")).text()
+  expect(stored).not.toContain(accountPassword)
+  expect(stored).not.toContain("private-user")
+
+  // A reload forgets the key; the same password unlocks the vault again.
+  await page.reload()
+  await expect(page.getByText("private-user", { exact: true })).toHaveCount(0)
   await expect(
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
-  await page.getByLabel("Vault password", { exact: true }).fill(accountPassword)
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("wrong-account-password")
   await page.getByRole("button", { name: "Unlock vault" }).click()
   await expect(page.locator("form").getByRole("alert")).toBeVisible()
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByRole("button", { name: "Unlock vault" }).click()
+  await unlockVault(page)
   await expect(page.getByText("private-user", { exact: true })).toBeVisible()
 })
 
-test("isolates accounts without adopting the pre-account local vault", async ({
+test("isolates accounts and ignores a pre-account local vault", async ({
   page,
 }) => {
   await page.addInitScript(() =>
@@ -88,22 +131,20 @@ test("isolates accounts without adopting the pre-account local vault", async ({
       "legacy-kept-untouched"
     )
   )
-  const first = await registerAccount(page)
+  await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
-  await page.getByRole("button", { name: "Close", exact: true }).click()
-  const firstVault = await page.request.get("/api/vault")
-  expect(firstVault.status()).toBe(200)
-  expect((await firstVault.json()).envelope).toBeTruthy()
+  await openNewVault(page)
+  await saveCredential(page, "First account", "first-user")
+  const firstVault = await (await page.request.get("/api/vault")).json()
+  expect(firstVault.envelope).toBeTruthy()
   await page.getByRole("button", { name: "Sign out", exact: true }).click()
   await expect
     .poll(async () => (await page.request.get("/api/auth/session")).status())
     .toBe(401)
   await registerAccount(page)
   await page.reload()
-  await expect(
-    page.getByRole("heading", { name: "Create your vault" })
-  ).toBeVisible()
+  await openNewVault(page)
+  await expect(page.getByText("first-user", { exact: true })).toHaveCount(0)
   expect(
     await page.evaluate(() =>
       localStorage.getItem("ung-password-manager:vault:v1")
@@ -111,14 +152,13 @@ test("isolates accounts without adopting the pre-account local vault", async ({
   ).toBe("legacy-kept-untouched")
   const otherVault = await page.request.get("/api/vault")
   expect(otherVault.status()).toBe(200)
-  expect(await otherVault.json()).toEqual({ envelope: null, revision: null })
-  expect(
-    await page.evaluate(
-      (id) =>
-        localStorage.getItem(`ung-password-manager:vault:v1:account:${id}`),
-      first.id
-    )
-  ).toBeNull()
+  const other = await otherVault.json()
+  expect(other).toEqual({
+    wrappedVaultKey: expect.any(Object),
+    envelope: null,
+    revision: null,
+  })
+  expect(other.wrappedVaultKey).not.toEqual(firstVault.wrappedVaultKey)
 })
 
 test("sign-out in another tab removes unlocked credentials and forms", async ({
@@ -127,7 +167,7 @@ test("sign-out in another tab removes unlocked credentials and forms", async ({
 }) => {
   await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page
     .getByLabel("Username", { exact: true })
     .fill("unsaved-private-user")
@@ -153,7 +193,7 @@ test("a failed sign-out still clears decrypted state and can be retried", async 
 }) => {
   await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page.getByLabel("Username", { exact: true }).fill("unsaved-secret")
   await page.getByRole("button", { name: "Close", exact: true }).click()
   await page.route("**/api/auth/logout", (route) => route.abort("failed"))
@@ -207,7 +247,7 @@ test("a revoked session locks the vault when the app regains focus", async ({
 }) => {
   await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   const response = await page.request.post("/api/auth/logout", {
     headers: { Origin: "http://127.0.0.1:3100" },
     data: {},
@@ -228,7 +268,7 @@ test("session expiry clears the unlocked vault without user interaction", async 
   await page.clock.install()
   await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page.getByLabel("Username", { exact: true }).fill("expiring-secret")
   await page.clock.fastForward(8 * 60 * 60 * 1000 + 1000)
   await expect(
@@ -244,7 +284,7 @@ test("a late valid session response cannot reopen the vault after sign-out", asy
 }) => {
   await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page.getByRole("button", { name: "Close", exact: true }).click()
   let release!: () => void
   let started!: () => void
@@ -323,7 +363,7 @@ for (const delayedNotifications of [false, true]) {
     await registerAccount(page)
     await page.goto("/vault")
     await expect(
-      page.getByRole("heading", { name: "Create your vault" })
+      page.getByRole("heading", { name: "Unlock your vault" })
     ).toBeVisible()
     await page.getByRole("button", { name: "Sign out", exact: true }).click()
     await expect(
@@ -359,7 +399,7 @@ test("an account change queues a fresh check behind an older pending check", asy
   await registerAccount(page)
   await page.goto("/vault")
   await expect(
-    page.getByRole("heading", { name: "Create your vault" })
+    page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
   let release!: () => void
   let started!: () => void
@@ -388,7 +428,7 @@ test("an account change queues a fresh check behind an older pending check", asy
   const nextAccount = await registerAccount(other)
   await other.goto("/vault")
   await expect(
-    other.getByRole("heading", { name: "Create your vault" })
+    other.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
   await other.evaluate(() => {
     const channel = new BroadcastChannel("ung-password-manager:account")
@@ -401,6 +441,6 @@ test("an account change queues a fresh check behind an older pending check", asy
     nextAccount.email
   )
   await expect(
-    page.getByRole("heading", { name: "Create your vault" })
+    page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
 })

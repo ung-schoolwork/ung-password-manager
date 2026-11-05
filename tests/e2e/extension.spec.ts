@@ -6,7 +6,7 @@ import path from "node:path"
 import { chromium, expect, test, type BrowserContext } from "@playwright/test"
 
 import { EXTENSION_ID } from "../../extension/identity"
-import { accountPassword } from "./account-helpers"
+import { accountProof } from "./account-helpers"
 import { setTestClientIp } from "./fixtures"
 
 const appOrigin = "http://127.0.0.1:3100"
@@ -63,11 +63,12 @@ test("the popup reaches the app with the browser's session and an allowed origin
   // Sign in through the app; the extension shares this browser's cookies.
   const clientIp = await setTestClientIp(context)
   const email = `extension-${crypto.randomUUID()}@example.test`
+  const proof = await accountProof(email)
   const registered = await context.request.post(
     `${appOrigin}/api/auth/register`,
     {
       headers: { Origin: appOrigin, "x-e2e-client-ip": clientIp },
-      data: { email, password: accountPassword },
+      data: proof,
     }
   )
   expect(registered.status()).toBe(201)
@@ -96,8 +97,9 @@ test("the popup reaches the app with the browser's session and an allowed origin
   await expect(popup.getByRole("status")).toHaveText("You're not signed in.")
 
   // A session cookie set in response to the extension is kept by the browser.
+  // Sign-in sends the key derived from the password, as the app does.
   const signIn = await popup.evaluate(
-    async ({ origin, email, password, clientIp }) => {
+    async ({ origin, email, authKey, clientIp }) => {
       const response = await fetch(`${origin}/api/auth/login`, {
         method: "POST",
         credentials: "include",
@@ -105,11 +107,11 @@ test("the popup reaches the app with the browser's session and an allowed origin
           "content-type": "application/json",
           "x-e2e-client-ip": clientIp,
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, authKey }),
       })
       return response.status
     },
-    { origin: appOrigin, email, password: accountPassword, clientIp }
+    { origin: appOrigin, email, authKey: proof.authKey, clientIp }
   )
   expect(signIn).toBe(200)
 

@@ -14,6 +14,10 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  ACCOUNT_PASSWORD_MAX_LENGTH,
+  ACCOUNT_PASSWORD_MIN_LENGTH,
+} from "@/lib/auth/shared"
 
 export function AccountForm({ mode }: { mode: "login" | "register" }) {
   const {
@@ -35,7 +39,7 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
     event.preventDefault()
     setError(null)
     if (registering && password !== confirmation) {
-      setError("The account passwords do not match.")
+      setError("The passwords do not match.")
       return
     }
     setBusy(true)
@@ -65,8 +69,8 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
           </h1>
           <CardDescription>
             {registering
-              ? "Choose an account password. You’ll unlock your vault separately."
-              : "Sign in to your account, then unlock your vault."}
+              ? "Choose one password for signing in and protecting your vault."
+              : "Sign in to open your vault."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -99,14 +103,14 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="account-password">Account password</Label>
+              <Label htmlFor="account-password">Password</Label>
               <Input
                 id="account-password"
                 type="password"
                 autoComplete={registering ? "new-password" : "current-password"}
                 required
-                minLength={12}
-                maxLength={128}
+                minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+                maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={busy}
@@ -119,23 +123,25 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                   id="account-password-help"
                   className="text-xs text-muted-foreground"
                 >
-                  Use 12 to 128 characters. Choose a different password for your
-                  vault.
+                  Use {ACCOUNT_PASSWORD_MIN_LENGTH} to{" "}
+                  {ACCOUNT_PASSWORD_MAX_LENGTH} characters. Your vault is
+                  encrypted with this password, so if you forget it your saved
+                  passwords can’t be recovered.
                 </p>
               ) : null}
             </div>
             {registering ? (
               <div className="space-y-2">
                 <Label htmlFor="account-password-confirmation">
-                  Confirm account password
+                  Confirm password
                 </Label>
                 <Input
                   id="account-password-confirmation"
                   type="password"
                   autoComplete="new-password"
                   required
-                  minLength={12}
-                  maxLength={128}
+                  minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+                  maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                   value={confirmation}
                   onChange={(event) => setConfirmation(event.target.value)}
                   disabled={busy}

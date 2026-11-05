@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto"
 import mongoose, { Schema } from "mongoose"
-import { connectAuth } from "@/lib/auth/server"
-import type { VaultEnvelopeV1 } from "@/lib/vault/types"
+import { connectAuth, User } from "@/lib/auth/server"
+import type { VaultEnvelope } from "@/lib/vault/types"
 import {
+  parseWrappedVaultKey,
   VaultConflictError,
   type AccountVaultSnapshot,
   type VaultWrite,
@@ -11,7 +12,7 @@ import {
 interface StoredVault {
   ownerId: string
   revision: string
-  envelope: VaultEnvelopeV1
+  envelope: VaultEnvelope
 }
 
 const schema = new Schema<StoredVault>({
@@ -38,10 +39,18 @@ export async function loadAccountVault(
   ownerId: string
 ): Promise<AccountVaultSnapshot> {
   await connectVault()
-  const vault = await Vault.findOne({ ownerId }).lean()
+  const [user, vault] = await Promise.all([
+    User.findById(ownerId, { wrappedVaultKey: 1 }).lean<{
+      wrappedVaultKey?: unknown
+    }>(),
+    Vault.findOne({ ownerId }).lean(),
+  ])
+  // Every account is created with a wrapped vault key.
+  const wrappedVaultKey = parseWrappedVaultKey(user?.wrappedVaultKey)
+  if (!wrappedVaultKey) throw new Error("Account vault key is missing")
   return vault
-    ? { envelope: vault.envelope, revision: vault.revision }
-    : { envelope: null, revision: null }
+    ? { wrappedVaultKey, envelope: vault.envelope, revision: vault.revision }
+    : { wrappedVaultKey, envelope: null, revision: null }
 }
 
 export async function saveAccountVault(ownerId: string, write: VaultWrite) {

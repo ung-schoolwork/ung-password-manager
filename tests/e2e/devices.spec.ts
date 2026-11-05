@@ -1,11 +1,10 @@
 import type { Browser, BrowserContext, Page } from "@playwright/test"
 import {
-  accountPassword,
   approvalCode,
   approve,
-  createVault,
+  openNewVault,
   registerAccount,
-  vaultPassword,
+  signIn,
 } from "./account-helpers"
 import { expect, setTestClientIp, test } from "./fixtures"
 
@@ -14,7 +13,7 @@ const origin = "http://127.0.0.1:3100"
 async function firstDevice(page: Page) {
   const account = await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page.keyboard.press("Escape")
   return account
 }
@@ -24,21 +23,20 @@ async function secondDevice(browser: Browser, email: string) {
   await setTestClientIp(context)
   const page = await context.newPage()
   await page.goto("/sign-in")
-  await page.getByLabel("Email", { exact: true }).fill(email)
-  await page
-    .getByLabel("Account password", { exact: true })
-    .fill(accountPassword)
-  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  await signIn(page, email)
   return { context, page }
 }
 
-async function unlock(page: Page) {
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByRole("button", { name: "Unlock vault", exact: true }).click()
+// The password entered at sign-in opens the vault as soon as the device is
+// approved, without asking for it again.
+async function opensOnceApproved(page: Page) {
   // An empty vault opens the add dialog; close it to reach the vault itself.
   await expect(
     page.getByRole("dialog", { name: "Add a credential" })
-  ).toBeVisible()
+  ).toBeVisible({ timeout: 15_000 })
+  await expect(
+    page.getByRole("heading", { name: "Unlock your vault" })
+  ).toHaveCount(0)
   await page.keyboard.press("Escape")
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible()
 }
@@ -77,9 +75,7 @@ test("a new device cannot read the vault until an approved device enters its cod
   await expect(
     page.getByRole("status").filter({ hasText: "can now open" })
   ).toBeVisible()
-  await expect(
-    second.page.getByRole("heading", { name: "Unlock your vault" })
-  ).toBeVisible({ timeout: 15_000 })
+  await opensOnceApproved(second.page)
   const allowed = await second.context.request.get("/api/vault")
   expect(allowed.status()).toBe(200)
   await close(second.context)
@@ -138,10 +134,7 @@ test("a change on one approved device appears on another", async ({
   const account = await firstDevice(page)
   const second = await secondDevice(browser, account.email)
   await approve(page, await approvalCode(second.page))
-  await expect(
-    second.page.getByRole("heading", { name: "Unlock your vault" })
-  ).toBeVisible({ timeout: 15_000 })
-  await unlock(second.page)
+  await opensOnceApproved(second.page)
 
   // Return to the vault after approving from Settings.
   await page
@@ -177,10 +170,7 @@ test("saving an edit after another device changed the credential reports a confl
   const account = await firstDevice(page)
   const second = await secondDevice(browser, account.email)
   await approve(page, await approvalCode(second.page))
-  await expect(
-    second.page.getByRole("heading", { name: "Unlock your vault" })
-  ).toBeVisible({ timeout: 15_000 })
-  await unlock(second.page)
+  await opensOnceApproved(second.page)
 
   // Return to the vault after approving from Settings.
   await page
@@ -272,10 +262,7 @@ test("a removed device loses access and goes back to waiting for approval", asyn
   const account = await firstDevice(page)
   const second = await secondDevice(browser, account.email)
   await approve(page, await approvalCode(second.page))
-  await expect(
-    second.page.getByRole("heading", { name: "Unlock your vault" })
-  ).toBeVisible({ timeout: 15_000 })
-  await unlock(second.page)
+  await opensOnceApproved(second.page)
 
   // The settings page still shows the approved devices after approval.
   const deviceList = page.getByRole("list", { name: "Approved devices" })

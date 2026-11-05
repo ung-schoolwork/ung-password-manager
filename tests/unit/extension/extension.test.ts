@@ -11,10 +11,13 @@ import {
 import { fetchSession } from "../../../extension/src/api"
 import {
   decryptVault,
+  deriveAccountKeys,
   encryptVault,
+  unwrapVaultKey,
   VaultUnlockError,
   type VaultDataV1,
 } from "../../../extension/src/vault"
+import * as webApp from "../../../lib/vault/crypto.client"
 
 const root = path.resolve(import.meta.dir, "../../..")
 
@@ -89,11 +92,32 @@ describe("extension session check", () => {
 describe("shared vault encryption in the extension", () => {
   const data: VaultDataV1 = { version: 1, credentials: [] }
 
-  it("round-trips a vault through the web app's encryption module", async () => {
-    const envelope = await encryptVault("extension passphrase", data)
-    expect(await decryptVault("extension passphrase", envelope)).toEqual(data)
+  const email = "extension@example.test"
+  const password = "extension password 123"
+
+  it("derives the same sign-in key as the web app", async () => {
+    const extension = await deriveAccountKeys(email, password)
+    const app = await webApp.deriveAccountKeys(email, password)
+    expect(extension.authKey).toBe(app.authKey)
+  })
+
+  it("opens a vault the web app created with the account password", async () => {
+    const app = await webApp.deriveAccountKeys(email, password)
+    const wrapped = await webApp.createWrappedVaultKey(app.wrappingKey)
+    const envelope = await webApp.encryptVault(
+      await webApp.unwrapVaultKey(app.wrappingKey, wrapped),
+      data
+    )
+
+    const { wrappingKey } = await deriveAccountKeys(email, password)
+    const vaultKey = await unwrapVaultKey(wrappingKey, wrapped)
+    expect(await decryptVault(vaultKey, envelope)).toEqual(data)
+    expect(
+      await decryptVault(vaultKey, await encryptVault(vaultKey, data))
+    ).toEqual(data)
+    const wrong = await deriveAccountKeys(email, "wrong password 123")
     await expect(
-      decryptVault("wrong passphrase", envelope)
+      unwrapVaultKey(wrong.wrappingKey, wrapped)
     ).rejects.toBeInstanceOf(VaultUnlockError)
   })
 

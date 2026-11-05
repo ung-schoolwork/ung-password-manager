@@ -17,6 +17,7 @@ import {
   User,
 } from "../../../lib/auth/server"
 import { approvePendingDevice, removeDevice } from "../../../lib/devices/server"
+import { accountBody } from "./account-body"
 
 const origin = "http://127.0.0.1:3100"
 const prefix = `devices-${randomUUID()}`
@@ -43,7 +44,7 @@ function authRequest(email: string, ip: string) {
       origin,
       "x-test-client-ip": ip,
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(accountBody(email, password)),
   })
 }
 // A browser's cookie header: the session and device cookies from a response.
