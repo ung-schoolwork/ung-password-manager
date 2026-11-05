@@ -9,10 +9,96 @@
   <body>
     <main>
       <h1>UNG Password Manager</h1>
-      <p id="status" role="status" aria-busy="true">Checking your account…</p>
-      <button id="open-app" type="button" hidden>
-        Open UNG Password Manager
-      </button>
+
+      <section id="loading-view">
+        <p role="status" aria-busy="true">Checking your account…</p>
+      </section>
+
+      <section id="sign-in-view" aria-labelledby="sign-in-heading" hidden>
+        <h2 id="sign-in-heading">Sign in</h2>
+        <form id="sign-in-form" novalidate>
+          <label for="sign-in-email">Email</label>
+          <input
+            id="sign-in-email"
+            name="email"
+            type="email"
+            autocomplete="username"
+            required
+          />
+          <label for="sign-in-password">Password</label>
+          <input
+            id="sign-in-password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <p id="sign-in-error" class="error" role="alert" hidden></p>
+          <button id="sign-in-submit" type="submit">Sign in</button>
+        </form>
+        <button id="create-account" class="link" type="button">
+          New here? Create an account
+        </button>
+      </section>
+
+      <section id="unlock-view" aria-labelledby="unlock-heading" hidden>
+        <h2 id="unlock-heading">Unlock your vault</h2>
+        <p id="unlock-account"></p>
+        <form id="unlock-form" novalidate>
+          <label for="unlock-password">Password</label>
+          <input
+            id="unlock-password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <p id="unlock-error" class="error" role="alert" hidden></p>
+          <button id="unlock-submit" type="submit">Unlock vault</button>
+        </form>
+        <button class="secondary sign-out" type="button">Sign out</button>
+      </section>
+
+      <section id="approval-view" aria-labelledby="approval-heading" hidden>
+        <h2 id="approval-heading">Approve this device</h2>
+        <p>
+          On a device you already use, open Settings, find “Add a device”, and
+          enter this code. A new code appears here if this one expires.
+        </p>
+        <p
+          id="approval-code"
+          class="code"
+          aria-label="Device approval code"
+        ></p>
+        <p role="status">Waiting for approval…</p>
+        <button class="secondary sign-out" type="button">Sign out</button>
+      </section>
+
+      <section id="vault-view" aria-labelledby="vault-heading" hidden>
+        <div class="row">
+          <h2 id="vault-heading">Your vault</h2>
+          <button id="lock" class="secondary" type="button">Lock</button>
+        </div>
+        <p id="vault-account"></p>
+        <p id="vault-empty" hidden>
+          Nothing saved yet. Add logins in UNG Password Manager.
+        </p>
+        <ul id="vault-entries" aria-label="Saved logins"></ul>
+        <div class="row">
+          <button id="open-vault" class="secondary" type="button">
+            Open UNG Password Manager
+          </button>
+          <button class="secondary sign-out" type="button">Sign out</button>
+        </div>
+      </section>
+
+      <section id="unavailable-view" hidden>
+        <p role="alert">
+          Can't reach UNG Password Manager right now. Check your connection and
+          try again.
+        </p>
+        <button id="retry" type="button">Try again</button>
+      </section>
     </main>
   </body>
 </html>

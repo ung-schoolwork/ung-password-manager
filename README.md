@@ -68,7 +68,7 @@ Each browser is identified by a long-lived, HttpOnly device cookie and registere
 
 ## Chrome extension
 
-`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. For now the popup only shows whether this browser is signed in to the app. It is bundled with `Bun.build`; there is no separate package or framework.
+`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. The popup signs in, shows the device approval code, and opens the vault as a list of saved logins (account name and username). It is bundled with `Bun.build`; there is no separate package or framework.
 
 ```bash
 bun run build:extension                                         # app at http://localhost:3000
@@ -90,6 +90,16 @@ Entries that are not exactly `chrome-extension://` followed by a 32-letter ID ar
 **Authentication.** The extension uses the browser's existing session cookie rather than a separate token. Chrome treats requests from an extension page or service worker to an origin in its `host_permissions` as same-site, so the HttpOnly, `SameSite=Strict` session and device cookies are sent and set as they are for the app itself; the cookie settings did not change. No credential is stored in extension storage or readable by extension code. The trade-off is that the extension and the app in the same Chrome profile share one session and one device approval: signing out in either signs out both. The Playwright test `tests/e2e/extension.spec.ts` loads the built extension in Chromium and checks both the cookie and the origin rules.
 
 **Requests go through the service worker.** The popup asks the service worker over `chrome.runtime` messaging, and the service worker calls the API. Content scripts must do the same: a request made from a content script carries the visited site's origin and is rejected.
+
+**Signing in and opening the vault.** The extension is not a separate device: it uses the Chrome profile's sign-in and device approval (`extension/src/popup-controller.ts`).
+
+- Signed out: the popup asks for the email and password, derives the keys, and sends `{ email, authKey }` to `/api/auth/login`. The session cookie is the browser's, so the app is signed in too.
+- Signed in: the popup takes the email from `/api/auth/session` and asks only for the password, which opens the vault locally; there is no second sign-in.
+- Not approved: `POST /api/devices` (the same call the app makes) returns the approval code, which the popup shows and re-checks every 3 seconds. `/api/vault` returns 403 until an approved device enters the code in Settings. A password entered at sign-in is kept as the wrapping key until then, so the vault opens without asking again.
+- Open vault: every 5 seconds the popup re-checks the session and `/api/vault/revision`. A 401 or a different account shows sign-in or unlock again, a 403 (this browser was removed in Settings) shows a new approval code, and a new revision is downloaded and decrypted.
+- Sign-out in the popup calls `/api/auth/logout`, which signs out the app as well; the app notices on focus or within 30 seconds. Sign-out in the app is noticed by the open popup within 5 seconds, or when it next opens.
+
+The wrapping key, the vault key, and the decrypted list live only in the popup's memory. The service worker relays requests and only handles the auth key and ciphertext; it keeps nothing between messages. Nothing is written to `chrome.storage`, and the manifest requests no permissions besides host access to the app. Closing the popup, locking, signing out, a 401, or a 403 drops the keys and the list, and opening the popup again asks for the password. The popup keeps only the account name, website, and username of each login; passwords are decrypted with the rest of the vault but not kept.
 
 **Shared vault encryption.** `extension/src/vault.ts` re-exports `lib/vault/crypto.client.ts`; the bundler compiles the same module into the extension, so encryption is never copied. A unit test bundles it for the browser and round-trips a vault through it.
 

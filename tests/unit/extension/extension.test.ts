@@ -67,6 +67,7 @@ describe("extension session check", () => {
 
     expect(await fetchSession("https://app.example.test", signedIn)).toEqual({
       state: "signed-in",
+      userId: "1",
       email: "a@example.test",
     })
     expect(requested?.[0]).toBe("https://app.example.test/api/auth/session")
