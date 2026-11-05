@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
+import { copyWithAutoClear } from "@/lib/vault/clipboard"
 
 export function GeneratorWorkspace() {
   const [copied, setCopied] = useState(false)
@@ -21,7 +22,7 @@ export function GeneratorWorkspace() {
     setCopyError(null)
 
     try {
-      await navigator.clipboard.writeText(password)
+      await copyWithAutoClear(password)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
