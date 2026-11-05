@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises"
 
+import type { Request } from "@playwright/test"
+
 import { expect, test } from "./fixtures"
 import { registerAccount, unlockVault } from "./account-helpers"
 
@@ -232,6 +234,106 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
     "Updated recovery details."
   )
   await expect(page.getByLabel("Risk level")).toHaveValue("high")
+})
+
+test("searches credentials by account, site, or username and clears accessibly without sending the query", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await unlockVault(page)
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
+
+  const addCredential = async (
+    accountName: string,
+    siteOrApp: string,
+    username: string
+  ) => {
+    await page.getByLabel("Account label").fill(accountName)
+    await page.getByLabel("Website or app").fill(siteOrApp)
+    await page.getByLabel("Username", { exact: true }).fill(username)
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("Search-test-password-123!")
+    await page.getByRole("button", { name: "Save credential" }).click()
+    await expect(
+      page.getByRole("dialog", { name: "Add a credential" })
+    ).toBeHidden()
+    await expect(page.getByText(accountName, { exact: true })).toBeVisible()
+  }
+
+  await addCredential("Work Mail", "mail.example.edu", "alice@campus.example")
+  await page.getByRole("button", { name: "Add credential" }).click()
+  await addCredential(
+    "Personal Stream",
+    "video.example.com",
+    "bob@personal.example"
+  )
+
+  const search = page.getByRole("searchbox", { name: "Search credentials" })
+  const rows = page
+    .getByRole("list", { name: "Saved credentials" })
+    .getByRole("listitem")
+
+  // Searching happens in the browser. Other requests (such as the vault's
+  // regular check for changes from other devices) may still go out while the
+  // user types, so check that none of them carries what was searched for.
+  const observedRequests: string[] = []
+  const recordRequest = (request: Request) => {
+    observedRequests.push(
+      `${request.url()}\n${request.postData() ?? ""}`.toLowerCase()
+    )
+  }
+  const searchTerms: string[] = []
+  const searchFor = async (term: string) => {
+    searchTerms.push(term)
+    await search.fill(term)
+  }
+  page.on("request", recordRequest)
+
+  await searchFor("WORK MAIL")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("Work Mail")
+
+  await searchFor("EXAMPLE.EDU")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("Work Mail")
+
+  await searchFor("ALICE@CAMPUS")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("Work Mail")
+
+  await searchFor("no-such-credential")
+  await expect(
+    page.getByRole("status").filter({ hasText: "No credentials match" })
+  ).toBeVisible()
+  await expect(rows).toHaveCount(0)
+
+  await search.press("Tab")
+  const clearSearch = page.getByRole("button", { name: "Clear search" })
+  await expect(clearSearch).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(search).toHaveValue("")
+  await expect(rows).toHaveCount(2)
+
+  await searchFor("PERSONAL")
+  await expect(rows).toHaveCount(1)
+  await search.press("Escape")
+  await expect(search).toHaveValue("")
+  await expect(rows).toHaveCount(2)
+  page.off("request", recordRequest)
+
+  for (const term of searchTerms) {
+    const encoded = encodeURIComponent(term)
+    for (const form of new Set([term, encoded, encoded.replace(/%20/g, "+")])) {
+      const needle = form.toLowerCase()
+      expect(
+        observedRequests.filter((request) => request.includes(needle)),
+        `requests containing "${form}"`
+      ).toEqual([])
+    }
+  }
 })
 
 test("previews generated passwords live on the generator page", async ({
