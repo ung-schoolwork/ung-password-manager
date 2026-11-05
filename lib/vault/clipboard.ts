@@ -27,13 +27,17 @@ const CLEAR_AFTER_MS = clearAfterMs()
 //
 // The timer can outlive the vault, so it must never hold the copied value
 // itself (SCRUM-64): only a digest is kept, and nothing the timer closes over
-// may reference the plaintext.
+// may reference the plaintext. That includes callbacks from the component
+// that copied: a closure created in a component keeps the component's scope
+// (and its props, such as the password) alive. Components hear about a clear
+// through onClipboardCleared instead, and stop listening when they unmount.
 let pendingClear: {
   timer: ReturnType<typeof setTimeout>
   digest: string
   sequence: number
 } | null = null
 let copySequence = 0
+const clearedListeners = new Set<(copyId: number) => void>()
 
 function cancelPendingClear() {
   if (!pendingClear) return
@@ -51,14 +55,22 @@ async function digestOf(text: string): Promise<string> {
   ).join("")
 }
 
+// Calls `listener` with the copy's id (as returned by copyWithAutoClear) each
+// time a copy is actually cleared from the clipboard. Returns a function that
+// stops listening; call it on unmount.
+export function onClipboardCleared(
+  listener: (copyId: number) => void
+): () => void {
+  clearedListeners.add(listener)
+  return () => {
+    clearedListeners.delete(listener)
+  }
+}
+
 // Copies `value` and schedules it to be cleared. Rejects if the browser
-// refuses the copy. `onCleared` runs only if the clipboard was actually
-// cleared; the component that copied may have unmounted by then, so it must
-// not capture the copied value either.
-export async function copyWithAutoClear(
-  value: string,
-  onCleared?: () => void
-): Promise<void> {
+// refuses the copy. Resolves with an id for this copy, which
+// onClipboardCleared listeners receive if it is cleared.
+export async function copyWithAutoClear(value: string): Promise<number> {
   await navigator.clipboard.writeText(value)
 
   // This copy owns the clipboard now: the previous pending clear is dropped
@@ -70,7 +82,7 @@ export async function copyWithAutoClear(
   const digest = await digestOf(value)
 
   // A newer copy may have landed while hashing; it owns the clipboard now.
-  if (sequence !== copySequence) return
+  if (sequence !== copySequence) return sequence
 
   const timer = setTimeout(async () => {
     if (pendingClear?.sequence !== sequence) return
@@ -93,12 +105,14 @@ export async function copyWithAutoClear(
     if (stillOurs) {
       try {
         await navigator.clipboard.writeText("")
-        onCleared?.()
       } catch {
         // Leave things as they are if the clear itself fails.
+        return
       }
+      for (const listener of clearedListeners) listener(sequence)
     }
   }, CLEAR_AFTER_MS)
 
   pendingClear = { timer, digest, sequence }
+  return sequence
 }
