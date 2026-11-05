@@ -2,7 +2,12 @@ import { formatDeviceCode } from "@/lib/devices/shared"
 
 import type { ExtensionRequest } from "./api"
 import { APP_ORIGIN } from "./config"
-import { PopupController, type PopupView, type Send } from "./popup-controller"
+import {
+  PopupController,
+  type PopupView,
+  type Send,
+  type VaultEntry,
+} from "./popup-controller"
 
 function element<T extends HTMLElement = HTMLElement>(id: string) {
   return document.getElementById(id) as T
@@ -29,8 +34,16 @@ const unlockError = element("unlock-error")
 const unlockAccount = element("unlock-account")
 const approvalCode = element("approval-code")
 const vaultAccount = element("vault-account")
-const vaultEntries = element("vault-entries")
 const vaultEmpty = element("vault-empty")
+const vaultContent = element("vault-content")
+const vaultSearch = element<HTMLInputElement>("vault-search")
+const siteLogins = element("site-logins")
+const siteHeading = element("site-heading")
+const siteEntries = element("site-entries")
+const siteEmpty = element("site-empty")
+const searchResults = element("search-results")
+const resultEntries = element("result-entries")
+const resultsEmpty = element("results-empty")
 
 const send: Send = async (request: ExtensionRequest) => {
   try {
@@ -48,11 +61,60 @@ function showError(target: HTMLElement, message: string | null) {
 
 let shown: PopupView["name"] | null = null
 
+function listEntries(list: HTMLElement, entries: VaultEntry[]) {
+  list.replaceChildren(
+    ...entries.map((entry) => {
+      const item = document.createElement("li")
+      const name = document.createElement("span")
+      name.className = "name"
+      name.textContent = entry.accountName || entry.siteOrApp
+      const username = document.createElement("span")
+      username.className = "username"
+      username.textContent = entry.username
+      item.append(name, username)
+      return item
+    })
+  )
+}
+
+/** Removes every decrypted login from the page. */
+function clearVault() {
+  siteEntries.replaceChildren()
+  resultEntries.replaceChildren()
+  vaultSearch.value = ""
+}
+
+function renderVault(view: Extract<PopupView, { name: "vault" }>) {
+  vaultAccount.textContent = `Signed in as ${view.email}`
+  vaultEmpty.hidden = view.total > 0
+  vaultContent.hidden = view.total === 0
+  if (vaultSearch.value !== view.query) vaultSearch.value = view.query
+
+  const searching = view.results !== null
+  siteLogins.hidden = searching
+  searchResults.hidden = !searching
+  listEntries(siteEntries, searching ? [] : view.siteEntries)
+  listEntries(resultEntries, view.results ?? [])
+
+  if (view.site) {
+    siteHeading.hidden = false
+    siteHeading.textContent = `Saved for ${view.site}`
+    siteEmpty.textContent = `No logins saved for ${view.site}. Search to find another one.`
+  } else {
+    siteHeading.hidden = true
+    siteEmpty.textContent = "Search to find a saved login."
+  }
+  siteEmpty.hidden = view.siteEntries.length > 0
+  resultsEmpty.textContent =
+    view.results?.length === 0 ? "No logins match your search." : ""
+  resultsEmpty.hidden = view.results?.length !== 0
+}
+
 function render(view: PopupView) {
   for (const [name, section] of Object.entries(views))
     section.hidden = name !== view.name
   // Decrypted logins stay in the page only while the vault is shown.
-  if (view.name !== "vault") vaultEntries.replaceChildren()
+  if (view.name !== "vault") clearVault()
 
   switch (view.name) {
     case "sign-in":
@@ -80,27 +142,35 @@ function render(view: PopupView) {
       approvalCode.textContent = formatDeviceCode(view.code)
       break
     case "vault":
-      vaultAccount.textContent = `Signed in as ${view.email}`
-      vaultEmpty.hidden = view.entries.length > 0
-      vaultEntries.replaceChildren(
-        ...view.entries.map((entry) => {
-          const item = document.createElement("li")
-          const name = document.createElement("span")
-          name.className = "name"
-          name.textContent = entry.accountName || entry.siteOrApp
-          const username = document.createElement("span")
-          username.className = "username"
-          username.textContent = entry.username
-          item.append(name, username)
-          return item
-        })
-      )
+      renderVault(view)
+      if (shown !== "vault" && view.total > 0) vaultSearch.focus()
       break
   }
   shown = view.name
 }
 
-const controller = new PopupController({ send, render })
+/**
+ * The address of the tab the popup was opened on. Clicking the toolbar button
+ * lets the popup read it once (the activeTab permission); it is not kept.
+ */
+async function currentTabUrl(): Promise<string | null> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    return tab?.url ?? null
+  } catch {
+    return null
+  }
+}
+
+const controller = new PopupController({
+  send,
+  render,
+  tabUrl: await currentTabUrl(),
+})
+
+vaultSearch.addEventListener("input", () =>
+  controller.search(vaultSearch.value)
+)
 
 signInForm.addEventListener("submit", (event) => {
   event.preventDefault()
@@ -139,7 +209,7 @@ element("open-vault").addEventListener("click", () => openApp("/vault"))
 // logins explicitly as well, in case the page lingers.
 window.addEventListener("pagehide", () => {
   controller.dispose()
-  vaultEntries.replaceChildren()
+  clearVault()
 })
 
 void controller.start()

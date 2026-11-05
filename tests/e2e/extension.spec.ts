@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -35,6 +35,7 @@ let extensionDir: string
 // The Chrome profile with the extension installed. The app opened in it shares
 // the extension's session and device approval.
 let context: BrowserContext
+let profileDir: string
 
 test.beforeAll(() => {
   extensionDir = mkdtempSync(path.join(tmpdir(), "ung-extension-"))
@@ -51,12 +52,16 @@ test.beforeAll(() => {
 
 test.beforeEach(async () => {
   // The bundled Chromium (not the headless shell) is required for extensions.
-  context = await chromium.launchPersistentContext("", {
+  profileDir = mkdtempSync(path.join(tmpdir(), "ung-extension-profile-"))
+  context = await chromium.launchPersistentContext(profileDir, {
     channel: "chromium",
     baseURL: appOrigin,
     args: [
       `--disable-extensions-except=${extensionDir}`,
       `--load-extension=${extensionDir}`,
+      // Lets openToolbarPopup reach the real popup, which Playwright does not
+      // list among the context's pages.
+      "--remote-debugging-port=0",
     ],
   })
   await setTestClientIp(context)
@@ -64,18 +69,23 @@ test.beforeEach(async () => {
 
 test.afterEach(async () => {
   await context?.close()
+  rmSync(profileDir, { recursive: true, force: true })
 })
 
 test.afterAll(() => {
   rmSync(extensionDir, { recursive: true, force: true })
 })
 
-function credential(accountName: string, username: string): Credential {
+function credential(
+  accountName: string,
+  username: string,
+  siteOrApp = `${username}.example.test`
+): Credential {
   const now = new Date().toISOString()
   return {
     id: crypto.randomUUID(),
     accountName,
-    siteOrApp: `${username}.example.test`,
+    siteOrApp,
     username,
     password: `${username}-password-123`,
     createdAt: now,
@@ -108,6 +118,32 @@ async function openPopup() {
   return popup
 }
 
+/**
+ * Opens the extension's real toolbar popup on the active tab, as clicking the
+ * toolbar button does. The popup reads that tab's address; without the click's
+ * activeTab grant it can only read pages on the app's origin.
+ */
+async function openToolbarPopup(tab: Page) {
+  await tab.bringToFront()
+  const worker =
+    context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"))
+  await worker.evaluate(() => chrome.action.openPopup())
+  const port = readFileSync(
+    path.join(profileDir, "DevToolsActivePort"),
+    "utf8"
+  ).split("\n")[0]
+  const devtools = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
+  let popup: Page | undefined
+  await expect(async () => {
+    popup = devtools
+      .contexts()
+      .flatMap((browserContext) => browserContext.pages())
+      .find((page) => page.url() === popupUrl)
+    expect(popup).toBeDefined()
+  }).toPass({ timeout: 5_000 })
+  return { popup: popup!, disconnect: () => devtools.close() }
+}
+
 async function signInFromPopup(popup: Page, email: string) {
   const form = popup.getByRole("region", { name: "Sign in" })
   await form.getByLabel("Email").fill(email)
@@ -121,8 +157,16 @@ async function unlockPopup(popup: Page, password = accountPassword) {
   await form.getByRole("button", { name: "Unlock vault" }).click()
 }
 
-function savedLogins(popup: Page) {
-  return popup.getByRole("list", { name: "Saved logins" })
+function vaultRegion(popup: Page) {
+  return popup.getByRole("region", { name: "Your vault", exact: true })
+}
+
+/** Searches the open vault and returns the list of results. */
+async function searchVault(popup: Page, query: string) {
+  await vaultRegion(popup)
+    .getByRole("searchbox", { name: "Search your vault" })
+    .fill(query)
+  return popup.getByRole("list", { name: "Search results" })
 }
 
 async function popupApprovalCode(popup: Page) {
@@ -156,7 +200,7 @@ test("the popup signs in, waits for approval, opens the vault, and loses it when
 
   // Signed in, but not an approved device: it shows the code and gets no vault.
   const code = await popupApprovalCode(popup)
-  await expect(savedLogins(popup)).toBeHidden()
+  await expect(vaultRegion(popup)).toBeHidden()
   expect((await context.request.get("/api/vault")).status()).toBe(403)
 
   // Signing in from the popup signed in the app in this profile as well.
@@ -172,8 +216,9 @@ test("the popup signs in, waits for approval, opens the vault, and loses it when
   await laptopPage.goto("/vault")
   await unlockVault(laptopPage)
   await approve(laptopPage, code)
-  await expect(savedLogins(popup)).toBeVisible({ timeout: 15_000 })
-  await expect(savedLogins(popup).getByRole("listitem")).toHaveText([
+  await expect(vaultRegion(popup)).toBeVisible({ timeout: 15_000 })
+  const results = await searchVault(popup, "student")
+  await expect(results.getByRole("listitem")).toHaveText([
     /Bank\s*student-bank/,
     /Course portal\s*student-portal/,
   ])
@@ -188,7 +233,7 @@ test("the popup signs in, waits for approval, opens the vault, and loses it when
   await expect(
     popup.getByRole("heading", { name: "Approve this device" })
   ).toBeVisible({ timeout: 15_000 })
-  await expect(savedLogins(popup)).toBeHidden()
+  await expect(vaultRegion(popup)).toBeHidden()
   await expect(popup.getByText("student-portal")).toHaveCount(0)
   expect((await context.request.get("/api/vault")).status()).toBe(403)
 
@@ -213,9 +258,11 @@ test("the popup unlocks the app's sign-in with the password, and signing out in 
   await expect(popup.getByRole("alert")).toHaveText(
     "The password is incorrect or the saved vault is damaged."
   )
-  await expect(savedLogins(popup)).toBeHidden()
+  await expect(vaultRegion(popup)).toBeHidden()
   await unlockPopup(popup)
-  await expect(savedLogins(popup)).toContainText("student-library")
+  await expect(await searchVault(popup, "library")).toContainText(
+    "student-library"
+  )
 
   // Signing out in the app signs out the extension and hides the vault.
   await appTab.goto("/vault")
@@ -232,7 +279,9 @@ test("the popup unlocks the app's sign-in with the password, and signing out in 
   // Signing in from the popup on an approved device opens the vault directly
   // and signs the app in again.
   await signInFromPopup(popup, account.email)
-  await expect(savedLogins(popup)).toContainText("student-library")
+  await expect(await searchVault(popup, "library")).toContainText(
+    "student-library"
+  )
   await appTab.goto("/vault")
   await unlockVault(appTab)
   await expect(appTab.getByText("student-library").first()).toBeVisible()
@@ -240,7 +289,7 @@ test("the popup unlocks the app's sign-in with the password, and signing out in 
   // Signing out in the popup signs out the app: returning to its tab closes
   // the vault there too.
   await popup
-    .getByRole("region", { name: "Your vault" })
+    .getByRole("region", { name: "Your vault", exact: true })
     .getByRole("button", { name: "Sign out" })
     .click()
   await expect(popup.getByRole("heading", { name: "Sign in" })).toBeVisible()
@@ -302,4 +351,72 @@ test("the server accepts the app and this extension, and rejects other origins",
 
   await popup.reload()
   await expect(popup.getByRole("heading", { name: "Sign in" })).toBeVisible()
+})
+
+test("the toolbar popup lists the logins for the current website and searches the rest", async () => {
+  // Signed in to the app in this Chrome profile, as its first device.
+  const appTab = await context.newPage()
+  const account = await registerAccount(appTab)
+  await saveVault(context.request, account.email, [
+    credential("Grades", "student-grades", "http://127.0.0.1:3100/vault"),
+    credential("Dashboard", "student-dashboard", "127.0.0.1"),
+    credential("Library", "student-library", "library.example.test"),
+    credential("Dev server", "student-dev", "localhost"),
+  ])
+  await appTab.goto("/sign-in")
+
+  const onSite = await openToolbarPopup(appTab)
+  await unlockPopup(onSite.popup)
+  await expect(
+    onSite.popup.getByRole("heading", { name: "Saved for 127.0.0.1" })
+  ).toBeVisible()
+  const forSite = onSite.popup.getByRole("list", {
+    name: "Logins for this website",
+  })
+  await expect(forSite.getByRole("listitem")).toHaveText([
+    /Dashboard\s*student-dashboard/,
+    /Grades\s*student-grades/,
+  ])
+
+  // Search finds the other logins by account name, website, or username.
+  let results = await searchVault(onSite.popup, "library.example")
+  await expect(results.getByRole("listitem")).toHaveText([
+    /Library\s*student-library/,
+  ])
+  await expect(forSite).toBeHidden()
+  results = await searchVault(onSite.popup, "DEV SERVER")
+  await expect(results.getByRole("listitem")).toHaveText([/Dev server/])
+  results = await searchVault(onSite.popup, "student-dev")
+  await expect(results.getByRole("listitem")).toHaveText([/Dev server/])
+  await searchVault(onSite.popup, "no such login")
+  await expect(
+    onSite.popup.getByText("No logins match your search.")
+  ).toBeVisible()
+  await searchVault(onSite.popup, "")
+  await expect(forSite.getByRole("listitem")).toHaveCount(2)
+
+  // Locking hides every login and the search.
+  await vaultRegion(onSite.popup).getByRole("button", { name: "Lock" }).click()
+  await expect(
+    onSite.popup.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+  await expect(onSite.popup.getByText("student-")).toHaveCount(0)
+  await onSite.popup.close()
+  await onSite.disconnect()
+
+  // A browser page has no website: nothing is suggested, but search works.
+  const settingsTab = await context.newPage()
+  await settingsTab.goto("chrome://version")
+  const offSite = await openToolbarPopup(settingsTab)
+  await unlockPopup(offSite.popup)
+  await expect(
+    vaultRegion(offSite.popup).getByText("Search to find a saved login.")
+  ).toBeVisible()
+  await expect(
+    offSite.popup.getByRole("list", { name: "Logins for this website" })
+  ).toBeHidden()
+  results = await searchVault(offSite.popup, "grades")
+  await expect(results.getByRole("listitem")).toHaveText([/Grades/])
+  await offSite.popup.close()
+  await offSite.disconnect()
 })

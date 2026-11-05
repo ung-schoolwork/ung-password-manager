@@ -40,7 +40,8 @@ main {
 }
 
 section,
-form {
+form,
+.stack {
   display: grid;
   gap: 0.5rem;
 }
@@ -58,6 +59,12 @@ h1 {
 h2 {
   margin: 0;
   font-size: 0.95rem;
+}
+
+h3 {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 
 p {
@@ -142,9 +149,9 @@ button:focus-visible {
   gap: 0.5rem;
 }
 
-#vault-entries {
+.entries {
   display: grid;
-  max-height: 18rem;
+  max-height: 14rem;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -153,25 +160,25 @@ button:focus-visible {
   border-radius: 0.5rem;
 }
 
-#vault-entries:empty {
+.entries:empty {
   display: none;
 }
 
-#vault-entries li {
+.entries li {
   display: grid;
   padding: 0.5rem 0.75rem;
 }
 
-#vault-entries li + li {
+.entries li + li {
   border-top: 1px solid var(--border);
 }
 
-#vault-entries .name {
+.entries .name {
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 
-#vault-entries .username {
+.entries .username {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
