@@ -20,7 +20,8 @@ export function AccountApp({ children }: { children: ReactNode }) {
 }
 
 function AccountScreen({ children }: { children: ReactNode }) {
-  const { status, session, signOut } = useAccount()
+  const { status, session, signOut, vaultUnlockKey, releaseVaultUnlockKey } =
+    useAccount()
   const pathname = usePathname()
   const router = useRouter()
   const accountPage = pathname === "/sign-in" || pathname === "/register"
@@ -63,7 +64,17 @@ function AccountScreen({ children }: { children: ReactNode }) {
           Sign out
         </Button>
       </div>
-      <VaultApp key={session.user.id} accountId={session.user.id}>
+      <VaultApp
+        key={session.user.id}
+        accountId={session.user.id}
+        email={session.user.email}
+        unlockKey={
+          vaultUnlockKey?.userId === session.user.id
+            ? vaultUnlockKey.wrappingKey
+            : null
+        }
+        onUnlockKeyUsed={releaseVaultUnlockKey}
+      >
         {children}
       </VaultApp>
     </div>

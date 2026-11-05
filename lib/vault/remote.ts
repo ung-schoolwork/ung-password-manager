@@ -1,4 +1,4 @@
-import type { VaultEnvelopeV1 } from "@/lib/vault/types"
+import type { VaultEnvelope, WrappedVaultKey } from "@/lib/vault/types"
 
 export const MAX_VAULT_REQUEST_BYTES = 1024 * 1024
 
@@ -20,12 +20,22 @@ export function isVaultRevision(value: unknown): value is string {
   )
 }
 
-export type AccountVaultSnapshot =
-  | { envelope: VaultEnvelopeV1; revision: string }
+// A 256-bit AES key wrapped with AES-GCM: 32 key bytes plus a 16-byte tag.
+const WRAPPED_KEY_BYTES = 48
+
+/**
+ * What an approved device receives: the wrapped vault key, and the encrypted
+ * vault with its revision once anything has been saved.
+ */
+export type AccountVaultSnapshot = {
+  wrappedVaultKey: WrappedVaultKey
+} & (
+  | { envelope: VaultEnvelope; revision: string }
   | { envelope: null; revision: null }
+)
 
 export interface VaultWrite {
-  envelope: VaultEnvelopeV1
+  envelope: VaultEnvelope
   expectedRevision: string | null
 }
 
@@ -58,22 +68,27 @@ function base64Size(value: unknown): number | null {
   }
 }
 
+export function parseWrappedVaultKey(value: unknown): WrappedVaultKey | null {
+  if (
+    !hasKeys(value, ["version", "cipher", "wrappedKey"]) ||
+    value.version !== 1 ||
+    !hasKeys(value.cipher, ["name", "iv"]) ||
+    value.cipher.name !== "AES-GCM" ||
+    base64Size(value.cipher.iv) !== 12 ||
+    base64Size(value.wrappedKey) !== WRAPPED_KEY_BYTES
+  )
+    return null
+  return value as unknown as WrappedVaultKey
+}
+
 export function parseVaultWrite(value: unknown): VaultWrite | null {
   if (!hasKeys(value, ["envelope", "expectedRevision"])) return null
   const { envelope, expectedRevision } = value
   if (expectedRevision !== null && !isVaultRevision(expectedRevision))
     return null
-  if (!hasKeys(envelope, ["version", "kdf", "cipher", "ciphertext"]))
-    return null
   if (
-    envelope.version !== 1 ||
-    !hasKeys(envelope.kdf, ["name", "hash", "iterations", "salt"]) ||
-    envelope.kdf.name !== "PBKDF2" ||
-    envelope.kdf.hash !== "SHA-256" ||
-    !Number.isSafeInteger(envelope.kdf.iterations) ||
-    (envelope.kdf.iterations as number) < 100_000 ||
-    (envelope.kdf.iterations as number) > 1_000_000 ||
-    base64Size(envelope.kdf.salt) !== 16 ||
+    !hasKeys(envelope, ["version", "cipher", "ciphertext"]) ||
+    envelope.version !== 2 ||
     !hasKeys(envelope.cipher, ["name", "iv"]) ||
     envelope.cipher.name !== "AES-GCM" ||
     base64Size(envelope.cipher.iv) !== 12
@@ -83,7 +98,7 @@ export function parseVaultWrite(value: unknown): VaultWrite | null {
   if (ciphertextSize === null || ciphertextSize < 16) return null
 
   return {
-    envelope: envelope as unknown as VaultEnvelopeV1,
+    envelope: envelope as unknown as VaultEnvelope,
     expectedRevision: expectedRevision as string | null,
   }
 }

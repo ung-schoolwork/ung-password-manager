@@ -1,9 +1,7 @@
 import { mkdir } from "node:fs/promises"
 
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
-
-const vaultPassword = "correct horse battery staple"
+import { registerAccount, unlockVault } from "./account-helpers"
 
 test.beforeEach(async ({ page }) => {
   await registerAccount(page)
@@ -16,12 +14,10 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
   await page.goto("/")
 
   await expect(
-    page.getByRole("heading", { name: "Create your vault" })
+    page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
 
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await expect(page).toHaveURL(/\/vault$/)
   await expect(
@@ -141,8 +137,7 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
   await expect(
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
-  await page.getByLabel("Vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Unlock vault" }).click()
+  await unlockVault(page)
 
   await expect(
     page.getByText("University email", { exact: true })
@@ -153,17 +148,13 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   page,
 }) => {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
   await page.getByLabel("Username").fill("student@example.edu")
   await page.getByLabel("Password", { exact: true }).fill("OriginalDemo!123456")
-  await page
-    .getByLabel("Notes (optional)")
-    .fill("Original recovery details.")
+  await page.getByLabel("Notes (optional)").fill("Original recovery details.")
   await page.getByRole("button", { name: "Save credential" }).click()
 
   await page.getByRole("button", { name: "Edit University email" }).click()
@@ -188,7 +179,9 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   await expect(
     page.getByRole("dialog", { name: "Edit credential" })
   ).toBeHidden()
-  await expect(page.getByText("University email", { exact: true })).toBeVisible()
+  await expect(
+    page.getByText("University email", { exact: true })
+  ).toBeVisible()
   await expect(
     page.getByText("Changed but canceled", { exact: true })
   ).toBeHidden()
@@ -215,8 +208,7 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   await expect(
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
-  await page.getByLabel("Vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Unlock vault" }).click()
+  await unlockVault(page)
   await expect(
     page.getByText("Updated university account", { exact: true })
   ).toBeVisible()
@@ -247,9 +239,7 @@ test("previews generated passwords live on the generator page", async ({
 }) => {
   await page.goto("/")
 
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByRole("button", { name: "Close" }).click()
   await expect(

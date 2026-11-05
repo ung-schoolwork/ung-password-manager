@@ -2,12 +2,17 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto"
 import { isIP } from "node:net"
 import mongoose, { Schema } from "mongoose"
 import { NextResponse } from "next/server"
+import { isValidAccountEmail, normalizeAccountEmail } from "@/lib/auth/shared"
+import { parseWrappedVaultKey } from "@/lib/vault/remote"
+import type { WrappedVaultKey } from "@/lib/vault/types"
 
 export const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000
 export const SESSION_COOKIE =
   process.env.NODE_ENV === "production" ? "__Host-ung_session" : "ung_session"
 const LIMIT_WINDOW_MS = 15 * 60 * 1000
 const LIMITS = { global: 1000, source: 120, account: 10 } as const
+// The browser sends an auth key derived from the password, never the password.
+// It is still hashed so a database leak cannot be replayed as a login.
 const HASH_PREFIX = "scrypt-v1$" // N=32768, r=8, p=3, 64 bytes; changing parameters requires a new version.
 const HASH_OPTIONS = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 }
 const MAX_ACTIVE_HASHES = 2
@@ -15,8 +20,10 @@ let activeHashes = 0
 
 const userSchema = new Schema({
   email: { type: String, required: true, unique: true },
-  passwordHash: { type: String, required: true },
+  authKeyHash: { type: String, required: true },
   salt: { type: String, required: true },
+  // Only the account's password can unwrap this; the server cannot.
+  wrappedVaultKey: { type: Schema.Types.Mixed, required: true },
 })
 const sessionSchema = new Schema({
   tokenDigest: { type: String, required: true, unique: true },
@@ -112,7 +119,17 @@ export function setSessionCookie(
     expires,
   })
 }
-export async function credentials(request: Request) {
+export interface AccountInput {
+  email: string
+  authKey: string
+  /** Present when the body includes a valid wrapped vault key. */
+  wrappedVaultKey: WrappedVaultKey | null
+}
+
+/** Reads `{ email, authKey }`, plus `wrappedVaultKey` when registering. */
+export async function accountInput(
+  request: Request
+): Promise<AccountInput | null> {
   if (
     !/^application\/json(?:\s*;|\s*$)/i.test(
       request.headers.get("content-type") || ""
@@ -141,29 +158,28 @@ export async function credentials(request: Request) {
     }
     const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
     if (!body || typeof body !== "object" || Array.isArray(body)) return null
-    const { email, password } = body as Record<string, unknown>
-    if (typeof email !== "string" || typeof password !== "string") return null
-    const normalized = email.trim().toLowerCase()
-    if (
-      normalized.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ||
-      password.length < 12 ||
-      password.length > 128
-    )
+    const { email, authKey, wrappedVaultKey } = body as Record<string, unknown>
+    if (typeof email !== "string" || typeof authKey !== "string") return null
+    const normalized = normalizeAccountEmail(email)
+    if (!isValidAccountEmail(normalized) || !/^[0-9a-f]{64}$/.test(authKey))
       return null
-    return { email: normalized, password }
+    return {
+      email: normalized,
+      authKey,
+      wrappedVaultKey: parseWrappedVaultKey(wrappedVaultKey),
+    }
   } finally {
     reader.releaseLock()
   }
 }
 
 export class HashBusyError extends Error {}
-export async function hashPassword(password: string, salt: string) {
+export async function hashAuthKey(authKey: string, salt: string) {
   if (activeHashes >= MAX_ACTIVE_HASHES) throw new HashBusyError()
   activeHashes++
   try {
     const hash = await new Promise<Buffer>((resolve, reject) =>
-      scrypt(password, salt, 64, HASH_OPTIONS, (error, result) =>
+      scrypt(authKey, salt, 64, HASH_OPTIONS, (error, result) =>
         error ? reject(error) : resolve(result)
       )
     )
@@ -173,13 +189,13 @@ export async function hashPassword(password: string, salt: string) {
   }
 }
 const dummySalt = "00000000000000000000000000000000"
-export async function validPassword(
-  password: string,
+export async function validAuthKey(
+  authKey: string,
   hash?: string,
   salt?: string
 ) {
   const actual = Buffer.from(
-    (await hashPassword(password, salt || dummySalt)).slice(HASH_PREFIX.length),
+    (await hashAuthKey(authKey, salt || dummySalt)).slice(HASH_PREFIX.length),
     "hex"
   )
   const expected = Buffer.from(

@@ -1,10 +1,14 @@
 import { DeviceNotApprovedError } from "@/lib/devices/shared"
-import type { VaultRepository } from "@/lib/vault/repository.client"
-import type { VaultEnvelopeV1 } from "@/lib/vault/types"
+import type {
+  StoredVault,
+  VaultRepository,
+} from "@/lib/vault/repository.client"
+import type { VaultEnvelope } from "@/lib/vault/types"
 import {
   isVaultRevision,
   MAX_VAULT_REQUEST_BYTES,
   parseVaultWrite,
+  parseWrappedVaultKey,
   VaultConflictError,
 } from "@/lib/vault/remote"
 
@@ -56,23 +60,26 @@ export class RemoteVaultRepository implements VaultRepository {
     return this.revision
   }
 
-  async load(): Promise<VaultEnvelopeV1 | null> {
+  async load(): Promise<StoredVault> {
     const value = await vaultRequest("GET")
-    if (value?.envelope === null && value.revision === null) {
+    const wrappedVaultKey = parseWrappedVaultKey(value?.wrappedVaultKey)
+    if (!wrappedVaultKey)
+      throw new Error("Your saved vault is invalid or unsupported.")
+    if (value.envelope === null && value.revision === null) {
       this.revision = null
-      return null
+      return { wrappedVaultKey, envelope: null }
     }
     const parsed = parseVaultWrite({
-      envelope: value?.envelope,
-      expectedRevision: value?.revision,
+      envelope: value.envelope,
+      expectedRevision: value.revision,
     })
     if (!parsed || !isVaultRevision(parsed.expectedRevision))
       throw new Error("Your saved vault is invalid or unsupported.")
     this.revision = parsed.expectedRevision
-    return parsed.envelope
+    return { wrappedVaultKey, envelope: parsed.envelope }
   }
 
-  async save(envelope: VaultEnvelopeV1): Promise<void> {
+  async save(envelope: VaultEnvelope): Promise<void> {
     const write = { envelope, expectedRevision: this.revision }
     if (!parseVaultWrite(write))
       throw new Error("Your vault could not be saved in a supported format.")

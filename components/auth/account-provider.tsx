@@ -17,14 +17,28 @@ import {
   signOutGeneration,
   PENDING_SIGN_OUT,
   withAccountMutation,
+  type AccountProof,
   type AccountSession,
 } from "@/lib/auth/client"
+import { accountPasswordProblem } from "@/lib/auth/shared"
+import {
+  createWrappedVaultKey,
+  deriveAccountKeys,
+} from "@/lib/vault/crypto.client"
 
 type AccountStatus = "loading" | "signed-out" | "signed-in" | "error"
+/** The key that opens this account's vault, kept from sign-in until used. */
+export interface VaultUnlockKey {
+  userId: string
+  wrappingKey: CryptoKey
+}
 interface AccountContextValue {
   status: AccountStatus
   session: AccountSession | null
   error: string | null
+  vaultUnlockKey: VaultUnlockKey | null
+  /** Forgets the sign-in key once the vault has been opened with it. */
+  releaseVaultUnlockKey(): void
   authenticate(
     mode: "login" | "register",
     email: string,
@@ -40,6 +54,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AccountStatus>("loading")
   const [session, setSession] = useState<AccountSession | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [vaultUnlockKey, setVaultUnlockKey] = useState<VaultUnlockKey | null>(
+    null
+  )
   const generation = useRef(0)
   const channel = useRef<BroadcastChannel | null>(null)
   const signedOutLocally = useRef(false)
@@ -50,6 +67,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     generation.current += 1
     signedOutLocally.current = true
     setSession(null)
+    setVaultUnlockKey(null)
     setStatus("signed-out")
     setError(null)
   }, [])
@@ -128,6 +146,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           generation.current += 1
           signedOutLocally.current = false
           setSession(null)
+          setVaultUnlockKey(null)
           setStatus("loading")
           void refresh()
         } else if (event.data === "sign-out-complete" && !signOutIsPending()) {
@@ -162,6 +181,16 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   const authenticate = useCallback(
     async (mode: "login" | "register", email: string, password: string) => {
+      if (mode === "register") {
+        const problem = accountPasswordProblem(password)
+        if (problem) throw new Error(problem)
+      }
+      // The password stays in the browser. The server receives only a key
+      // derived from it that cannot decrypt the vault.
+      const keys = await deriveAccountKeys(email, password)
+      const proof: AccountProof = { email, authKey: keys.authKey }
+      if (mode === "register")
+        proof.wrappedVaultKey = await createWrappedVaultKey(keys.wrappingKey)
       const current = ++generation.current
       const signOutAtStart = signOutGeneration()
       signedOutLocally.current = true
@@ -180,10 +209,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           signOutAtStart !== signOutGeneration()
         )
           throw new Error("Sign-in was interrupted. Try again.")
-        const next = await accountRequest<AccountSession>(mode, {
-          email,
-          password,
-        })
+        const next = await accountRequest<AccountSession>(mode, proof)
         if (
           current !== generation.current ||
           signOutIsPending() ||
@@ -205,6 +231,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         signedOutLocally.current = false
         setError(null)
         setSession(next)
+        setVaultUnlockKey({
+          userId: next.user.id,
+          wrappingKey: keys.wrappingKey,
+        })
         setStatus("signed-in")
         channel.current?.postMessage("account-changed")
       })
@@ -228,9 +258,20 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     }
   }, [forget])
 
+  const releaseVaultUnlockKey = useCallback(() => setVaultUnlockKey(null), [])
+
   return (
     <AccountContext.Provider
-      value={{ status, session, error, authenticate, signOut, refresh }}
+      value={{
+        status,
+        session,
+        error,
+        vaultUnlockKey,
+        releaseVaultUnlockKey,
+        authenticate,
+        signOut,
+        refresh,
+      }}
     >
       {children}
     </AccountContext.Provider>

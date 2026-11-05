@@ -1,10 +1,9 @@
 import type { Page } from "@playwright/test"
 
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
+import { registerAccount, unlockVault } from "./account-helpers"
 import { CLIPBOARD_CLEAR_MS } from "./clipboard-clear-timing"
 
-const vaultPassword = "correct horse battery staple"
 const credentialPassword = "OriginalDemo!123456"
 
 // Shared with playwright.config.ts through clipboard-clear-timing.ts, so the
@@ -24,9 +23,7 @@ test.beforeEach(async ({ page }) => {
 
 async function createVaultWithCredential(page: Page) {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")

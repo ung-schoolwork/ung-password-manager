@@ -1,9 +1,25 @@
 import { request as httpRequest } from "node:http"
 import { expect, test } from "./fixtures"
+import type { Page } from "@playwright/test"
 import { encryptVault, decryptVault } from "../../lib/vault/crypto.client"
-import { registerAccount, vaultPassword } from "./account-helpers"
+import {
+  accountPassword,
+  registerAccount,
+  vaultKeyFor,
+} from "./account-helpers"
 
 const origin = "http://127.0.0.1:3100"
+
+/** Registers an account and opens its vault key the way the browser does. */
+async function openAccount(page: Page) {
+  const owner = await registerAccount(page)
+  const snapshot = await (await page.request.get("/api/vault")).json()
+  return {
+    owner,
+    wrappedVaultKey: snapshot.wrappedVaultKey,
+    vaultKey: await vaultKeyFor(owner.email, snapshot),
+  }
+}
 
 test("encrypted vault storage requires an authenticated account", async ({
   request,
@@ -21,10 +37,14 @@ test("encrypted vault storage requires an authenticated account", async ({
 test("an account can save and retrieve its encrypted vault", async ({
   page,
 }) => {
-  await registerAccount(page)
+  const { wrappedVaultKey, vaultKey } = await openAccount(page)
   const missing = await page.request.get("/api/vault")
   expect(missing.status()).toBe(200)
-  expect(await missing.json()).toEqual({ envelope: null, revision: null })
+  expect(await missing.json()).toEqual({
+    wrappedVaultKey,
+    envelope: null,
+    revision: null,
+  })
 
   const timestamp = "2026-01-01T00:00:00.000Z"
   const data = {
@@ -42,7 +62,7 @@ test("an account can save and retrieve its encrypted vault", async ({
       },
     ],
   }
-  const envelope = await encryptVault(vaultPassword, data)
+  const envelope = await encryptVault(vaultKey, data)
   const response = await page.request.put("/api/vault", {
     headers: { Origin: origin },
     data: { envelope, expectedRevision: null },
@@ -52,13 +72,17 @@ test("an account can save and retrieve its encrypted vault", async ({
   expect(saved.revision).toEqual(expect.any(String))
   const retrieved = await page.request.get("/api/vault")
   expect(retrieved.status()).toBe(200)
-  expect(await retrieved.json()).toEqual({ envelope, revision: saved.revision })
+  expect(await retrieved.json()).toEqual({
+    wrappedVaultKey,
+    envelope,
+    revision: saved.revision,
+  })
   expect(JSON.stringify(await retrieved.json())).not.toContain(
     data.credentials[0].password
   )
-  expect(JSON.stringify(await retrieved.json())).not.toContain(vaultPassword)
+  expect(JSON.stringify(await retrieved.json())).not.toContain(accountPassword)
   expect(
-    await decryptVault(vaultPassword, (await retrieved.json()).envelope)
+    await decryptVault(vaultKey, (await retrieved.json()).envelope)
   ).toEqual(data)
 })
 
@@ -66,8 +90,8 @@ test("vault reads and writes cannot target another account", async ({
   page,
   browser,
 }) => {
-  const owner = await registerAccount(page)
-  const envelope = await encryptVault(vaultPassword, {
+  const { owner, wrappedVaultKey, vaultKey } = await openAccount(page)
+  const envelope = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })
@@ -84,7 +108,13 @@ test("vault reads and writes cannot target another account", async ({
     await registerAccount(other)
     const response = await other.request.get(`/api/vault?ownerId=${owner.id}`)
     expect(response.status()).toBe(200)
-    expect(await response.json()).toEqual({ envelope: null, revision: null })
+    const otherVault = await response.json()
+    expect(otherVault).toEqual({
+      wrappedVaultKey: expect.any(Object),
+      envelope: null,
+      revision: null,
+    })
+    expect(otherVault.wrappedVaultKey).not.toEqual(wrappedVaultKey)
     const attempt = await other.request.put("/api/vault", {
       headers: { Origin: origin },
       data: { envelope, expectedRevision: revision },
@@ -96,7 +126,11 @@ test("vault reads and writes cannot target another account", async ({
     })
     expect(forgedOwner.status()).toBe(400)
     const unchanged = await page.request.get("/api/vault")
-    expect(await unchanged.json()).toEqual({ envelope, revision })
+    expect(await unchanged.json()).toEqual({
+      wrappedVaultKey,
+      envelope,
+      revision,
+    })
   } finally {
     await otherContext.close()
   }
@@ -105,8 +139,8 @@ test("vault reads and writes cannot target another account", async ({
 test("only one concurrent create or revision-checked save can succeed", async ({
   page,
 }) => {
-  await registerAccount(page)
-  const envelope = await encryptVault(vaultPassword, {
+  const { wrappedVaultKey, vaultKey } = await openAccount(page)
+  const envelope = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })
@@ -122,11 +156,11 @@ test("only one concurrent create or revision-checked save can succeed", async ({
   const { revision } = await created
     .find((response) => response.status() === 200)!
     .json()
-  const first = await encryptVault(vaultPassword, {
+  const first = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })
-  const second = await encryptVault(vaultPassword, {
+  const second = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })
@@ -146,6 +180,7 @@ test("only one concurrent create or revision-checked save can succeed", async ({
   expect(saved.revision).not.toBe(revision)
   const latest = await page.request.get("/api/vault")
   expect(await latest.json()).toEqual({
+    wrappedVaultKey,
     envelope: [first, second][winner],
     revision: saved.revision,
   })
@@ -161,8 +196,8 @@ test("only one concurrent create or revision-checked save can succeed", async ({
 test("vault writes reject forged origins, plaintext fields, malformed and oversized payloads", async ({
   page,
 }) => {
-  await registerAccount(page)
-  const envelope = await encryptVault(vaultPassword, {
+  const { wrappedVaultKey, vaultKey } = await openAccount(page)
+  const envelope = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })
@@ -175,12 +210,13 @@ test("vault writes reject forged origins, plaintext fields, malformed and oversi
   const invalid = [
     { ...valid, password: "readable-vault-password" },
     { ...valid, envelope: { ...envelope, credentials: [] } },
-    { ...valid, envelope: { ...envelope, version: 2 } },
+    { ...valid, envelope: { ...envelope, version: 1 } },
     {
       ...valid,
+      // The key is wrapped with the account; the vault never names a password KDF.
       envelope: {
         ...envelope,
-        kdf: { ...envelope.kdf, iterations: 2_000_000 },
+        kdf: { name: "PBKDF2", hash: "SHA-256", iterations: 600_000 },
       },
     },
     {
@@ -211,6 +247,7 @@ test("vault writes reject forged origins, plaintext fields, malformed and oversi
   })
   expect(oversized.status()).toBe(400)
   expect(await (await page.request.get("/api/vault")).json()).toEqual({
+    wrappedVaultKey,
     envelope: null,
     revision: null,
   })
@@ -219,8 +256,8 @@ test("vault writes reject forged origins, plaintext fields, malformed and oversi
 test("the size limit also applies to chunked bodies with no declared length", async ({
   page,
 }) => {
-  await registerAccount(page)
-  const envelope = await encryptVault(vaultPassword, {
+  const { wrappedVaultKey, vaultKey } = await openAccount(page)
+  const envelope = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })
@@ -255,6 +292,7 @@ test("the size limit also applies to chunked bodies with no declared length", as
   })
   expect(status).toBe(400)
   expect(await (await page.request.get("/api/vault")).json()).toEqual({
+    wrappedVaultKey,
     envelope: null,
     revision: null,
   })
@@ -263,8 +301,8 @@ test("the size limit also applies to chunked bodies with no declared length", as
 test("revoked sessions cannot read or write a saved vault", async ({
   page,
 }) => {
-  await registerAccount(page)
-  const envelope = await encryptVault(vaultPassword, {
+  const { vaultKey } = await openAccount(page)
+  const envelope = await encryptVault(vaultKey, {
     version: 1,
     credentials: [],
   })

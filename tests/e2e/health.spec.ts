@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises"
 
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
+import { registerAccount, unlockVault } from "./account-helpers"
 
 test.beforeEach(async ({ page }) => {
   await registerAccount(page)
@@ -9,13 +9,7 @@ test.beforeEach(async ({ page }) => {
 
 test("opens Health from a credential shield", async ({ page }) => {
   await page.goto("/")
-  await page
-    .getByLabel("Vault password", { exact: true })
-    .fill("correct horse battery staple")
-  await page
-    .getByLabel("Confirm vault password")
-    .fill("correct horse battery staple")
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
   await page
@@ -42,13 +36,7 @@ test("labels each credential shield with its health status", async ({
   page,
 }) => {
   await page.goto("/")
-  await page
-    .getByLabel("Vault password", { exact: true })
-    .fill("correct horse battery staple")
-  await page
-    .getByLabel("Confirm vault password")
-    .fill("correct horse battery staple")
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
@@ -99,13 +87,7 @@ test("shows saved password warnings and their reasons", async ({
   page,
 }, testInfo) => {
   await page.goto("/")
-  await page
-    .getByLabel("Vault password", { exact: true })
-    .fill("correct horse battery staple")
-  await page
-    .getByLabel("Confirm vault password")
-    .fill("correct horse battery staple")
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
@@ -169,13 +151,7 @@ test("tags only the highlighted saved account and keeps its current risk level",
   test.setTimeout(60_000)
 
   await page.goto("/")
-  await page
-    .getByLabel("Vault password", { exact: true })
-    .fill("correct horse battery staple")
-  await page
-    .getByLabel("Confirm vault password")
-    .fill("correct horse battery staple")
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   async function saveCredential(site: string) {
     await page.getByLabel("Account label").fill("University email")
@@ -305,13 +281,7 @@ test("keeps a newer account selection when an earlier save finishes late", async
   page,
 }) => {
   await page.goto("/")
-  await page
-    .getByLabel("Vault password", { exact: true })
-    .fill("correct horse battery staple")
-  await page
-    .getByLabel("Confirm vault password")
-    .fill("correct horse battery staple")
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   async function saveCredential(label: string, site: string) {
     await page.getByLabel("Account label").fill(label)
@@ -389,13 +359,7 @@ test("asks for a saved account before a risk level can be assigned", async ({
   page,
 }) => {
   await page.goto("/")
-  await page
-    .getByLabel("Vault password", { exact: true })
-    .fill("correct horse battery staple")
-  await page
-    .getByLabel("Confirm vault password")
-    .fill("correct horse battery staple")
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
   // An empty vault opens the add dialog; close it to reach the Health page.
   await page.keyboard.press("Escape")
   await page.getByRole("link", { name: "Health", exact: true }).click()

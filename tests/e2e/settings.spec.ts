@@ -1,16 +1,16 @@
 import type { Browser, Page } from "@playwright/test"
 import {
-  accountPassword,
   approvalCode,
-  createVault,
+  openNewVault,
   registerAccount,
+  signIn,
 } from "./account-helpers"
 import { expect, setTestClientIp, test } from "./fixtures"
 
 async function firstDevice(page: Page) {
   const account = await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page.keyboard.press("Escape")
   return account
 }
@@ -20,11 +20,7 @@ async function secondDevice(browser: Browser, email: string) {
   await setTestClientIp(context)
   const page = await context.newPage()
   await page.goto("/sign-in")
-  await page.getByLabel("Email", { exact: true }).fill(email)
-  await page
-    .getByLabel("Account password", { exact: true })
-    .fill(accountPassword)
-  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  await signIn(page, email)
   return { context, page }
 }
 
@@ -117,8 +113,9 @@ test("approves and removes another device", async ({ page, browser }) => {
   await expect(
     page.getByRole("status").filter({ hasText: "can now open" })
   ).toBeVisible()
+  // Approval opens the vault with the password entered at sign-in.
   await expect(
-    second.page.getByRole("heading", { name: "Unlock your vault" })
+    second.page.getByRole("dialog", { name: "Add a credential" })
   ).toBeVisible({ timeout: 15_000 })
   expect((await second.context.request.get("/api/vault")).status()).toBe(200)
 
