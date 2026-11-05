@@ -68,8 +68,9 @@ test.beforeEach(async () => {
 })
 
 test.afterEach(async () => {
+  // Hooks also run for the skipped mobile project, which launched nothing.
   await context?.close()
-  rmSync(profileDir, { recursive: true, force: true })
+  if (profileDir) rmSync(profileDir, { recursive: true, force: true })
 })
 
 test.afterAll(() => {
