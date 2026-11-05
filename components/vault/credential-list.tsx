@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { KeyRound, Pencil, Plus, Share2, Upload } from "lucide-react"
 import Link from "next/link"
 
@@ -13,6 +13,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
 import {
   getHealthStatusLabel,
@@ -25,6 +27,7 @@ import {
   analyzeCredentialsHealth,
   type CredentialHealthReport,
 } from "@/lib/vault/health"
+import { indexCredentialSearch, searchCredentials } from "@/lib/vault/search"
 import type { Credential } from "@/lib/vault/types"
 import { cn } from "@/lib/utils"
 
@@ -45,8 +48,20 @@ export function CredentialList({
     () => analyzeCredentialsHealth(credentials),
     [credentials]
   )
-  const [credentialToShare, setCredentialToShare] =
-    useState<Credential | null>(null)
+  const [credentialToShare, setCredentialToShare] = useState<Credential | null>(
+    null
+  )
+  const [searchValue, setSearchValue] = useState("")
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const query = searchValue.trim().toLowerCase()
+  const searchableCredentials = useMemo(
+    () => indexCredentialSearch(audited),
+    [audited]
+  )
+  const filteredCredentials = useMemo(
+    () => searchCredentials(searchableCredentials, query),
+    [query, searchableCredentials]
+  )
 
   return (
     <Card className="min-w-0">
@@ -55,7 +70,11 @@ export function CredentialList({
         <CardDescription className="text-sm">
           {credentials.length === 0
             ? "Your vault is empty."
-            : `${credentials.length} saved ${credentials.length === 1 ? "credential" : "credentials"}.`}
+            : query
+              ? `Showing ${filteredCredentials.length} of ${credentials.length} ${
+                  credentials.length === 1 ? "credential" : "credentials"
+                }.`
+              : `${credentials.length} saved ${credentials.length === 1 ? "credential" : "credentials"}.`}
         </CardDescription>
         <CardAction className="flex gap-2">
           <Button
@@ -99,18 +118,64 @@ export function CredentialList({
             </div>
           </div>
         ) : (
-          <ul className="flex flex-col gap-2" aria-label="Saved credentials">
-            {audited.map((credential) => (
-              <li key={credential.id}>
-                <CredentialRow
-                  credential={credential}
-                  editing={credential.id === editingCredentialId}
-                  onEdit={() => onEditCredential(credential)}
-                  onShare={() => setCredentialToShare(credential)}
+          <div className="space-y-4">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="credential-search">Search credentials</Label>
+                <Input
+                  ref={searchInputRef}
+                  id="credential-search"
+                  type="search"
+                  placeholder="Search by account, website, or username"
+                  value={searchValue}
+                  onChange={(event) => setSearchValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && searchValue.length > 0) {
+                      event.preventDefault()
+                      setSearchValue("")
+                    }
+                  }}
                 />
-              </li>
-            ))}
-          </ul>
+              </div>
+              {searchValue.length > 0 ? (
+                <Button
+                  className="h-9 px-3 text-sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setSearchValue("")
+                    searchInputRef.current?.focus()
+                  }}
+                >
+                  Clear search
+                </Button>
+              ) : null}
+            </div>
+            {query && filteredCredentials.length === 0 ? (
+              <p
+                className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"
+                role="status"
+              >
+                No credentials match &quot;{searchValue.trim()}&quot;.
+              </p>
+            ) : (
+              <ul
+                className="flex flex-col gap-2"
+                aria-label="Saved credentials"
+              >
+                {filteredCredentials.map((credential) => (
+                  <li key={credential.id}>
+                    <CredentialRow
+                      credential={credential}
+                      editing={credential.id === editingCredentialId}
+                      onEdit={() => onEditCredential(credential)}
+                      onShare={() => setCredentialToShare(credential)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </CardContent>
 

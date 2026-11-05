@@ -54,4 +54,7 @@ export async function approve(page: Page, code: string) {
     .click()
   await page.getByLabel("Add a device").fill(code)
   await page.getByRole("button", { name: "Approve device" }).click()
+  await expect(
+    page.getByRole("status").filter({ hasText: "can now open your vault." })
+  ).toBeVisible()
 }

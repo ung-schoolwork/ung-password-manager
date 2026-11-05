@@ -396,8 +396,14 @@ test("asks for a saved account before a risk level can be assigned", async ({
     .getByLabel("Confirm vault password")
     .fill("correct horse battery staple")
   await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
   // An empty vault opens the add dialog; close it to reach the Health page.
   await page.keyboard.press("Escape")
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toHaveCount(0)
   await page.getByRole("link", { name: "Health", exact: true }).click()
 
   await expect(
