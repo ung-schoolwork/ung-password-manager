@@ -166,7 +166,29 @@ button:focus-visible {
 
 .entries li {
   display: grid;
+}
+
+.entries button.entry {
+  display: grid;
+  justify-self: stretch;
+  border: 0;
+  border-radius: 0;
   padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+}
+
+.entries button.entry:hover {
+  background: var(--surface);
+}
+
+.entries button.entry:focus-visible {
+  outline-offset: -2px;
+}
+
+#fill-status:empty {
+  display: none;
 }
 
 .entries li + li {

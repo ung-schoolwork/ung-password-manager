@@ -68,3 +68,43 @@ export function credentialsForSite<T extends { siteOrApp: string }>(
     return savedHost !== null && hostMatchesSite(tabHost, savedHost)
   })
 }
+
+/** Why a saved login may not be filled into a page, if it may not. */
+export type FillProblem =
+  /** The page is not a website (for example chrome:// or file:). */
+  | "not-a-website"
+  /** The page is plain http on a host other than this computer. */
+  | "insecure"
+  /** The login's website is not a web address. */
+  | "no-website"
+  /** The page belongs to a different site than the login. */
+  | "different-site"
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
+
+/**
+ * Checks that a login saved for `siteOrApp` may be filled into the page at
+ * `pageUrl`: the page must be HTTPS (or http on this computer) and belong to
+ * the login's site. Returns null when filling is allowed.
+ */
+export function fillProblem(
+  pageUrl: string | null | undefined,
+  siteOrApp: string
+): FillProblem | null {
+  let url: URL
+  try {
+    url = new URL(pageUrl ?? "")
+  } catch {
+    return "not-a-website"
+  }
+  const pageHost = tabSiteHost(url.href)
+  if (!pageHost) return "not-a-website"
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
+  )
+    return "insecure"
+  const savedHost = savedSiteHost(siteOrApp)
+  if (!savedHost) return "no-website"
+  return hostMatchesSite(pageHost, savedHost) ? null : "different-site"
+}

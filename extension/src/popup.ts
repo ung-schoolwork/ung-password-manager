@@ -2,9 +2,12 @@ import { formatDeviceCode } from "@/lib/devices/shared"
 
 import type { ExtensionRequest } from "./api"
 import { APP_ORIGIN } from "./config"
+import type { FillOutcome } from "./fill-page"
 import {
   PopupController,
   type PopupView,
+  type CurrentTab,
+  type FillLogin,
   type Send,
   type VaultEntry,
 } from "./popup-controller"
@@ -44,6 +47,7 @@ const siteEmpty = element("site-empty")
 const searchResults = element("search-results")
 const resultEntries = element("result-entries")
 const resultsEmpty = element("results-empty")
+const fillStatus = element("fill-status")
 
 const send: Send = async (request: ExtensionRequest) => {
   try {
@@ -61,20 +65,41 @@ function showError(target: HTMLElement, message: string | null) {
 
 let shown: PopupView["name"] | null = null
 
+// Each login is a button: choosing it fills it into the current page.
 function listEntries(list: HTMLElement, entries: VaultEntry[]) {
+  const focused =
+    document.activeElement instanceof HTMLElement &&
+    list.contains(document.activeElement)
+      ? document.activeElement.dataset.id
+      : undefined
   list.replaceChildren(
     ...entries.map((entry) => {
       const item = document.createElement("li")
+      const button = document.createElement("button")
+      button.type = "button"
+      button.className = "entry"
+      button.dataset.id = entry.id
+      const label = entry.accountName || entry.siteOrApp
+      button.setAttribute(
+        "aria-label",
+        entry.username ? `Fill ${label}, ${entry.username}` : `Fill ${label}`
+      )
       const name = document.createElement("span")
       name.className = "name"
-      name.textContent = entry.accountName || entry.siteOrApp
+      name.textContent = label
       const username = document.createElement("span")
       username.className = "username"
       username.textContent = entry.username
-      item.append(name, username)
+      button.append(name, username)
+      item.append(button)
       return item
     })
   )
+  // Re-rendering replaces the buttons; keep keyboard focus where it was.
+  if (focused)
+    list
+      .querySelector<HTMLElement>(`button[data-id="${CSS.escape(focused)}"]`)
+      ?.focus()
 }
 
 /** Removes every decrypted login from the page. */
@@ -82,6 +107,7 @@ function clearVault() {
   siteEntries.replaceChildren()
   resultEntries.replaceChildren()
   vaultSearch.value = ""
+  fillStatus.textContent = ""
 }
 
 function renderVault(view: Extract<PopupView, { name: "vault" }>) {
@@ -108,6 +134,8 @@ function renderVault(view: Extract<PopupView, { name: "vault" }>) {
   resultsEmpty.textContent =
     view.results?.length === 0 ? "No logins match your search." : ""
   resultsEmpty.hidden = view.results?.length !== 0
+  fillStatus.textContent = view.notice?.text ?? ""
+  fillStatus.classList.toggle("error", view.notice?.tone === "error")
 }
 
 function render(view: PopupView) {
@@ -162,11 +190,69 @@ async function currentTabUrl(): Promise<string | null> {
   }
 }
 
+async function currentTab(): Promise<CurrentTab | null> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    return tab?.id === undefined ? null : { id: tab.id, url: tab.url ?? null }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fills a login into the tab's top frame only. The page script is injected
+ * now, not kept running on websites; the login is passed straight to it as
+ * arguments and is not stored anywhere.
+ */
+async function fillPage(
+  tabId: number,
+  login: FillLogin
+): Promise<FillOutcome | null> {
+  const target = { tabId, frameIds: [0] }
+  try {
+    await chrome.scripting.executeScript({ target, files: ["fill-page.js"] })
+    const [injection] = await chrome.scripting.executeScript({
+      target,
+      func: (username: string, password: string, siteOrApp: string) =>
+        (
+          globalThis as {
+            ungPasswordManagerFill?: (
+              username: string,
+              password: string,
+              siteOrApp: string
+            ) => unknown
+          }
+        ).ungPasswordManagerFill?.(username, password, siteOrApp) ?? null,
+      args: [login.username, login.password, login.siteOrApp],
+    })
+    const result = injection?.result as Record<string, unknown> | null
+    if (result?.refused === true) return { refused: true }
+    if (
+      typeof result?.username === "boolean" &&
+      typeof result.password === "boolean"
+    )
+      return { username: result.username, password: result.password }
+    return null
+  } catch {
+    return null
+  }
+}
+
 const controller = new PopupController({
   send,
   render,
   tabUrl: await currentTabUrl(),
+  currentTab,
+  fillPage,
 })
+
+for (const list of [siteEntries, resultEntries])
+  list.addEventListener("click", (event) => {
+    const button = (event.target as Element).closest<HTMLButtonElement>(
+      "button.entry"
+    )
+    if (button?.dataset.id) void controller.fill(button.dataset.id)
+  })
 
 vaultSearch.addEventListener("input", () =>
   controller.search(vaultSearch.value)

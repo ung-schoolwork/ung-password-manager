@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 
 import {
   credentialsForSite,
+  fillProblem,
   hostMatchesSite,
   savedSiteHost,
   tabSiteHost,
@@ -115,5 +116,55 @@ describe("credentialsForSite", () => {
     expect(ids("chrome://newtab")).toEqual([])
     expect(ids("file:///tmp/example.com.html")).toEqual([])
     expect(ids(null)).toEqual([])
+  })
+})
+
+describe("fillProblem", () => {
+  it("allows filling on HTTPS pages of the login's site and its subdomains", () => {
+    expect(fillProblem("https://example.com/login", "example.com")).toBeNull()
+    expect(
+      fillProblem("https://accounts.example.com/", "https://www.example.com")
+    ).toBeNull()
+  })
+
+  it("allows plain http only on this computer", () => {
+    expect(fillProblem("http://localhost:3000/login", "localhost")).toBeNull()
+    expect(fillProblem("http://127.0.0.1:3100/", "127.0.0.1:3100")).toBeNull()
+    expect(fillProblem("http://[::1]:8080/", "http://[::1]")).toBeNull()
+    expect(fillProblem("http://example.com/login", "example.com")).toBe(
+      "insecure"
+    )
+    expect(fillProblem("http://app.localhost/", "app.localhost")).toBe(
+      "insecure"
+    )
+  })
+
+  it("refuses pages on another site", () => {
+    expect(fillProblem("https://example.com/", "accounts.example.com")).toBe(
+      "different-site"
+    )
+    expect(fillProblem("https://evil-example.com/", "example.com")).toBe(
+      "different-site"
+    )
+    expect(fillProblem("https://example.org/", "example.com")).toBe(
+      "different-site"
+    )
+  })
+
+  it("refuses pages that are not websites and logins without a website", () => {
+    for (const url of [
+      "chrome://settings",
+      "file:///tmp/login.html",
+      "about:blank",
+      "javascript:alert(1)",
+      "https://user@example.com/",
+      "",
+      null,
+      undefined,
+    ])
+      expect(fillProblem(url, "example.com")).toBe("not-a-website")
+    expect(fillProblem("https://example.com/", "My bank app")).toBe(
+      "no-website"
+    )
   })
 })

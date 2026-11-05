@@ -421,3 +421,165 @@ test("the toolbar popup lists the logins for the current website and searches th
   await offSite.popup.close()
   await offSite.disconnect()
 })
+
+// Sign-in pages for the fill tests. They are served on the app's origin, the
+// only site the extension may reach without a real toolbar click (see
+// openToolbarPopup). Each page records the input and change events it sees.
+const RECORD_EVENTS = `<script>
+  window.events = []
+  for (const type of ["input", "change"])
+    document.addEventListener(type, (event) => events.push(type + ":" + event.target.name), true)
+</script>`
+
+const SIGN_IN_PAGE = `<!doctype html>
+<title>Sign in</title>
+<form>
+  <label>Email <input name="email" type="email" autocomplete="username" /></label>
+  <!-- Traps a careless filler would pick: closer to the password, or first. -->
+  <input name="trap-username" autocomplete="username" style="display:none" />
+  <input name="trap-password" type="password" autocomplete="current-password" style="position:absolute;left:-9999px" />
+  <label>Password <input name="password" type="password" autocomplete="current-password" /></label>
+  <button>Sign in</button>
+</form>
+<iframe title="Embedded sign-in" srcdoc="<input name='email' type='email' autocomplete='username'><input name='password' type='password'>"></iframe>
+${RECORD_EVENTS}`
+
+const TWO_STEP_PAGE = `<!doctype html>
+<title>Sign in</title>
+<form id="first">
+  <label>Email <input name="email" type="email" autocomplete="username" /></label>
+  <button id="next" type="button">Next</button>
+</form>
+<form id="second" hidden>
+  <label>Password <input name="password" type="password" autocomplete="current-password" /></label>
+  <button>Sign in</button>
+</form>
+<script>
+  next.onclick = () => { first.hidden = true; second.hidden = false }
+</script>
+${RECORD_EVENTS}`
+
+async function signInPage(html: string) {
+  const path = `/e2e-sign-in-${crypto.randomUUID()}`
+  await context.route(`${appOrigin}${path}`, (route) =>
+    route.fulfill({ contentType: "text/html", body: html })
+  )
+  const page = await context.newPage()
+  await page.goto(path)
+  return page
+}
+
+async function fillAccount() {
+  const appTab = await context.newPage()
+  const account = await registerAccount(appTab)
+  await saveVault(context.request, account.email, [
+    credential("Grades", "student-grades", "127.0.0.1"),
+    credential("Library", "student-library", "library.example.test"),
+  ])
+  await appTab.close()
+  return account
+}
+
+function fillStatus(popup: Page) {
+  return vaultRegion(popup).getByRole("status")
+}
+
+test("choosing a login fills the visible sign-in fields on the page, and nothing else", async () => {
+  await fillAccount()
+  const page = await signInPage(SIGN_IN_PAGE)
+  const { popup, disconnect } = await openToolbarPopup(page)
+  await unlockPopup(popup)
+  const grades = popup.getByRole("button", {
+    name: "Fill Grades, student-grades",
+  })
+  await expect(grades).toBeVisible()
+
+  // Unlocking alone fills nothing.
+  await expect(page.getByLabel("Email")).toHaveValue("")
+  await expect(page.getByLabel("Password")).toHaveValue("")
+
+  // A login for another site is refused.
+  const results = await searchVault(popup, "library")
+  await results.getByRole("button", { name: /^Fill Library/ }).click()
+  await expect(fillStatus(popup)).toHaveText(
+    "This login is for library.example.test, not 127.0.0.1, so it wasn't filled."
+  )
+  await expect(page.getByLabel("Email")).toHaveValue("")
+  await expect(page.getByLabel("Password")).toHaveValue("")
+
+  await searchVault(popup, "")
+  await grades.click()
+  await expect(fillStatus(popup)).toHaveText(
+    "Filled your username and password."
+  )
+  await expect(page.getByLabel("Email")).toHaveValue("student-grades")
+  await expect(page.getByLabel("Password")).toHaveValue(
+    "student-grades-password-123"
+  )
+  // Pages see the change as if it was typed.
+  expect(
+    await page.evaluate(() => (window as never as { events: string[] }).events)
+  ).toEqual([
+    "input:email",
+    "change:email",
+    "input:password",
+    "change:password",
+  ])
+  // Hidden and off-screen fields, and the embedded frame, stay empty.
+  for (const name of ["trap-username", "trap-password"])
+    await expect(page.locator(`input[name="${name}"]`)).toHaveValue("")
+  const frame = page.frameLocator('iframe[title="Embedded sign-in"]')
+  await expect(frame.locator('input[name="email"]')).toHaveValue("")
+  await expect(frame.locator('input[name="password"]')).toHaveValue("")
+  // The popup never shows the password.
+  await expect(popup.getByText("student-grades-password-123")).toHaveCount(0)
+
+  await popup.close()
+  await disconnect()
+})
+
+test("a two-step sign-in is filled one step at a time", async () => {
+  await fillAccount()
+  const page = await signInPage(TWO_STEP_PAGE)
+
+  const first = await openToolbarPopup(page)
+  await unlockPopup(first.popup)
+  await first.popup
+    .getByRole("button", { name: "Fill Grades, student-grades" })
+    .click()
+  await expect(fillStatus(first.popup)).toHaveText(
+    "Filled your username. When the page asks for your password, open the extension and choose this login again."
+  )
+  await expect(page.getByLabel("Email")).toHaveValue("student-grades")
+  await expect(page.locator('input[name="password"]')).toHaveValue("")
+  // Closing the popup forgets the vault; the next step asks again.
+  await first.popup.close()
+  await first.disconnect()
+
+  await page.getByRole("button", { name: "Next" }).click()
+  await expect(page.getByLabel("Password")).toBeVisible()
+
+  const second = await openToolbarPopup(page)
+  await expect(
+    second.popup.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+  await unlockPopup(second.popup)
+  await second.popup
+    .getByRole("button", { name: "Fill Grades, student-grades" })
+    .click()
+  await expect(fillStatus(second.popup)).toHaveText("Filled your password.")
+  await expect(page.getByLabel("Password")).toHaveValue(
+    "student-grades-password-123"
+  )
+  // The hidden email field from the first step was not filled again.
+  expect(
+    await page.evaluate(() => (window as never as { events: string[] }).events)
+  ).toEqual([
+    "input:email",
+    "change:email",
+    "input:password",
+    "change:password",
+  ])
+  await second.popup.close()
+  await second.disconnect()
+})

@@ -10,9 +10,17 @@ import {
   searchCredentials,
   type CredentialSearchEntry,
 } from "@/lib/vault/search"
-import { credentialsForSite, tabSiteHost } from "@/lib/vault/site-match"
+import {
+  credentialsForSite,
+  fillProblem,
+  savedSiteHost,
+  tabSiteHost,
+  type FillProblem,
+} from "@/lib/vault/site-match"
+import type { VaultEnvelope } from "@/lib/vault/types"
 
 import type { ExtensionRequest, ExtensionResponses, VaultSnapshot } from "./api"
+import type { FillOutcome } from "./fill-page"
 import {
   decryptVault,
   deriveAccountKeys,
@@ -45,8 +53,28 @@ export type PopupView =
       results: VaultEntry[] | null
       /** How many logins the vault holds. */
       total: number
+      /** The result of the last fill, if any. */
+      notice: Notice | null
     }
   | { name: "unavailable" }
+
+export interface Notice {
+  text: string
+  tone: "info" | "error"
+}
+
+/** The tab the popup was opened on, read again when the user fills a login. */
+export interface CurrentTab {
+  id: number
+  url: string | null
+}
+
+/** One login, decrypted only to be filled and then dropped. */
+export interface FillLogin {
+  username: string
+  password: string
+  siteOrApp: string
+}
 
 export type Send = <T extends ExtensionRequest>(
   request: T
@@ -57,11 +85,42 @@ export interface PopupControllerOptions {
   render(view: PopupView): void
   /** The URL of the tab the popup was opened on, if the browser shares it. */
   tabUrl?: string | null
+  /** Reads the active tab when the user chooses a login to fill. */
+  currentTab?: () => Promise<CurrentTab | null>
+  /** Fills the login into the tab; null when the page could not be reached. */
+  fillPage?: (tabId: number, login: FillLogin) => Promise<FillOutcome | null>
   /** How often a waiting device checks whether it has been approved. */
   approvalPollMs?: number
   /** How often an open vault checks it may still be shown. */
   vaultPollMs?: number
   deriveKeys?: typeof deriveAccountKeys
+}
+
+const FILL = {
+  both: "Filled your username and password.",
+  username:
+    "Filled your username. When the page asks for your password, open the extension and choose this login again.",
+  password: "Filled your password.",
+  none: "No sign-in fields were found on this page.",
+  failed:
+    "This page couldn't be filled. Open the extension from the page you want to sign in to.",
+}
+
+function refusal(
+  problem: FillProblem,
+  pageUrl: string | null | undefined,
+  siteOrApp: string
+): string {
+  switch (problem) {
+    case "not-a-website":
+      return "Logins can only be filled on websites."
+    case "insecure":
+      return "This page isn't secure, so the login wasn't filled."
+    case "no-website":
+      return "This login has no website address, so it can't be filled."
+    case "different-site":
+      return `This login is for ${savedSiteHost(siteOrApp)}, not ${tabSiteHost(pageUrl)}, so it wasn't filled.`
+  }
 }
 
 const MESSAGES = {
@@ -81,6 +140,11 @@ export class PopupController {
   private readonly deriveKeys: typeof deriveAccountKeys
   private readonly site: string | null
   private readonly tabUrl: string | null
+  private readonly currentTab: () => Promise<CurrentTab | null>
+  private readonly fillPage: (
+    tabId: number,
+    login: FillLogin
+  ) => Promise<FillOutcome | null>
 
   // Bumped whenever the account state is reset, so a reply to an earlier
   // request can never reopen a vault that was locked in the meantime.
@@ -94,6 +158,10 @@ export class PopupController {
   private searchIndex: CredentialSearchEntry<VaultEntry>[] = []
   private siteEntries: VaultEntry[] = []
   private query = ""
+  /** The encrypted vault, kept to decrypt one login when it is filled. */
+  private envelope: VaultEnvelope | null = null
+  private notice: Notice | null = null
+  private filling = false
   private timer: ReturnType<typeof setTimeout> | null = null
   private view: PopupView = { name: "loading" }
 
@@ -104,6 +172,8 @@ export class PopupController {
     this.vaultPollMs = options.vaultPollMs ?? 5_000
     this.deriveKeys = options.deriveKeys ?? deriveAccountKeys
     this.tabUrl = options.tabUrl ?? null
+    this.currentTab = options.currentTab ?? (async () => null)
+    this.fillPage = options.fillPage ?? (async () => null)
     this.site = tabSiteHost(this.tabUrl)
   }
 
@@ -186,7 +256,47 @@ export class PopupController {
   search(query: string): void {
     if (this.view.name !== "vault") return
     this.query = query
+    this.notice = null
     this.showVault()
+  }
+
+  /**
+   * Fills the chosen login into the current tab. Only that login's password
+   * is decrypted, and only after the tab has been checked again: it must still
+   * be on the login's site, over HTTPS (or http on this computer).
+   */
+  async fill(id: string): Promise<void> {
+    if (this.view.name !== "vault" || this.filling) return
+    const entry = this.entries.find((candidate) => candidate.id === id)
+    if (!entry) return
+    const generation = this.generation
+    this.filling = true
+    try {
+      const tab = await this.currentTab()
+      if (generation !== this.generation) return
+      const problem = tab
+        ? fillProblem(tab.url, entry.siteOrApp)
+        : "not-a-website"
+      if (!tab || problem)
+        return this.showNotice(
+          refusal(problem ?? "not-a-website", tab?.url, entry.siteOrApp),
+          "error"
+        )
+      const login = await this.decryptLogin(id)
+      if (generation !== this.generation) return
+      if (!login) return this.showNotice(FILL.failed, "error")
+      const outcome = await this.fillPage(tab.id, login)
+      if (generation !== this.generation) return
+      if (!outcome || "refused" in outcome)
+        return this.showNotice(FILL.failed, "error")
+      if (outcome.username && outcome.password)
+        return this.showNotice(FILL.both, "info")
+      if (outcome.username) return this.showNotice(FILL.username, "info")
+      if (outcome.password) return this.showNotice(FILL.password, "info")
+      this.showNotice(FILL.none, "error")
+    } finally {
+      this.filling = false
+    }
   }
 
   /** Locks the vault but keeps the browser signed in. */
@@ -220,6 +330,8 @@ export class PopupController {
     this.searchIndex = []
     this.siteEntries = []
     this.query = ""
+    this.envelope = null
+    this.notice = null
   }
 
   private showVault() {
@@ -234,6 +346,7 @@ export class PopupController {
         ? searchCredentials(this.searchIndex, this.query)
         : null,
       total: this.entries.length,
+      notice: this.notice,
     })
   }
 
@@ -315,6 +428,28 @@ export class PopupController {
     }
   }
 
+  private showNotice(text: string, tone: Notice["tone"]) {
+    this.notice = { text, tone }
+    this.showVault()
+  }
+
+  private async decryptLogin(id: string): Promise<FillLogin | null> {
+    if (!this.vaultKey || !this.envelope) return null
+    try {
+      const data = await decryptVault(this.vaultKey, this.envelope)
+      const credential = data.credentials.find((item) => item.id === id)
+      return credential
+        ? {
+            username: credential.username,
+            password: credential.password,
+            siteOrApp: credential.siteOrApp,
+          }
+        : null
+    } catch {
+      return null
+    }
+  }
+
   private async decrypt(generation: number, snapshot: VaultSnapshot) {
     let vaultKey = this.vaultKey
     if (!vaultKey) {
@@ -332,6 +467,7 @@ export class PopupController {
     this.wrappingKey = null
     this.vaultKey = vaultKey
     this.revision = snapshot.revision
+    this.envelope = snapshot.envelope
     this.entries = data.credentials
       .map(({ id, accountName, siteOrApp, username }) => ({
         id,
