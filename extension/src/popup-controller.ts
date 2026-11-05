@@ -1,8 +1,16 @@
 // The popup's account and vault state. All secrets live here, in the popup's
 // memory, and nowhere else: the wrapping key derived from the password, the
-// unwrapped vault key, and the decrypted list of logins. Closing the popup
+// unwrapped vault key, and the decrypted list of logins (without passwords).
+// Closing the popup
 // discards them; reopening it asks for the password again. Nothing is written
 // to extension storage, and the service worker only relays requests.
+
+import {
+  indexCredentialSearch,
+  searchCredentials,
+  type CredentialSearchEntry,
+} from "@/lib/vault/search"
+import { credentialsForSite, tabSiteHost } from "@/lib/vault/site-match"
 
 import type { ExtensionRequest, ExtensionResponses, VaultSnapshot } from "./api"
 import {
@@ -25,7 +33,19 @@ export type PopupView =
   | { name: "sign-in"; error: string | null; busy: boolean }
   | { name: "unlock"; email: string; error: string | null; busy: boolean }
   | { name: "approval"; email: string; code: string }
-  | { name: "vault"; email: string; entries: VaultEntry[] }
+  | {
+      name: "vault"
+      email: string
+      /** The current tab's site, or null for a page that is not a website. */
+      site: string | null
+      /** Logins saved for the current tab's site. */
+      siteEntries: VaultEntry[]
+      query: string
+      /** Every login matching `query`, or null while the search is empty. */
+      results: VaultEntry[] | null
+      /** How many logins the vault holds. */
+      total: number
+    }
   | { name: "unavailable" }
 
 export type Send = <T extends ExtensionRequest>(
@@ -35,6 +55,8 @@ export type Send = <T extends ExtensionRequest>(
 export interface PopupControllerOptions {
   send: Send
   render(view: PopupView): void
+  /** The URL of the tab the popup was opened on, if the browser shares it. */
+  tabUrl?: string | null
   /** How often a waiting device checks whether it has been approved. */
   approvalPollMs?: number
   /** How often an open vault checks it may still be shown. */
@@ -57,6 +79,8 @@ export class PopupController {
   private readonly approvalPollMs: number
   private readonly vaultPollMs: number
   private readonly deriveKeys: typeof deriveAccountKeys
+  private readonly site: string | null
+  private readonly tabUrl: string | null
 
   // Bumped whenever the account state is reset, so a reply to an earlier
   // request can never reopen a vault that was locked in the meantime.
@@ -66,6 +90,10 @@ export class PopupController {
   private wrappingKey: CryptoKey | null = null
   private vaultKey: CryptoKey | null = null
   private revision: string | null = null
+  private entries: VaultEntry[] = []
+  private searchIndex: CredentialSearchEntry<VaultEntry>[] = []
+  private siteEntries: VaultEntry[] = []
+  private query = ""
   private timer: ReturnType<typeof setTimeout> | null = null
   private view: PopupView = { name: "loading" }
 
@@ -75,6 +103,8 @@ export class PopupController {
     this.approvalPollMs = options.approvalPollMs ?? 3_000
     this.vaultPollMs = options.vaultPollMs ?? 5_000
     this.deriveKeys = options.deriveKeys ?? deriveAccountKeys
+    this.tabUrl = options.tabUrl ?? null
+    this.site = tabSiteHost(this.tabUrl)
   }
 
   get current(): PopupView {
@@ -152,6 +182,13 @@ export class PopupController {
     if (this.view.name === "unlock") this.showUnlock(MESSAGES.signOutFailed)
   }
 
+  /** Searches every saved login by account name, website, or username. */
+  search(query: string): void {
+    if (this.view.name !== "vault") return
+    this.query = query
+    this.showVault()
+  }
+
   /** Locks the vault but keeps the browser signed in. */
   lock(): void {
     const account = this.account
@@ -172,9 +209,32 @@ export class PopupController {
     this.timer = null
     this.account = null
     this.wrappingKey = null
+    this.forgetVault()
+    return this.generation
+  }
+
+  private forgetVault() {
     this.vaultKey = null
     this.revision = null
-    return this.generation
+    this.entries = []
+    this.searchIndex = []
+    this.siteEntries = []
+    this.query = ""
+  }
+
+  private showVault() {
+    if (!this.account) return this.showSignIn(null)
+    this.show({
+      name: "vault",
+      email: this.account.email,
+      site: this.site,
+      siteEntries: this.siteEntries,
+      query: this.query,
+      results: this.query.trim()
+        ? searchCredentials(this.searchIndex, this.query)
+        : null,
+      total: this.entries.length,
+    })
   }
 
   private show(view: PopupView) {
@@ -237,7 +297,7 @@ export class PopupController {
       return this.showSignIn(MESSAGES.signedOut)
     if (result.state === "not-approved") {
       // No vault data was sent. Keep the sign-in key until approval.
-      this.vaultKey = null
+      this.forgetVault()
       return this.checkDevice(generation)
     }
     if (result.state !== "ok") return this.showUnavailable()
@@ -246,7 +306,7 @@ export class PopupController {
     } catch (error) {
       if (generation !== this.generation) return
       this.wrappingKey = null
-      this.vaultKey = null
+      this.forgetVault()
       this.showUnlock(
         error instanceof VaultUnlockError
           ? error.message
@@ -272,7 +332,7 @@ export class PopupController {
     this.wrappingKey = null
     this.vaultKey = vaultKey
     this.revision = snapshot.revision
-    const entries = data.credentials
+    this.entries = data.credentials
       .map(({ id, accountName, siteOrApp, username }) => ({
         id,
         accountName,
@@ -284,7 +344,9 @@ export class PopupController {
           sensitivity: "base",
         })
       )
-    this.show({ name: "vault", email: this.account.email, entries })
+    this.searchIndex = indexCredentialSearch(this.entries)
+    this.siteEntries = credentialsForSite(this.entries, this.tabUrl)
+    this.showVault()
     this.schedule(generation, this.vaultPollMs, () => this.watch(generation))
   }
 
@@ -303,8 +365,7 @@ export class PopupController {
       return this.showSignIn(MESSAGES.signedOut)
     if (result.state === "not-approved") {
       // This browser was removed from the account's devices.
-      this.vaultKey = null
-      this.revision = null
+      this.forgetVault()
       this.show({ name: "loading" })
       return this.checkDevice(generation)
     }

@@ -5,7 +5,13 @@ export interface CredentialSearchEntry<T> {
   fields: string[]
 }
 
-export function indexCredentialSearch<T extends Credential>(
+/** The fields search looks at; the password and notes are never searched. */
+export type SearchableCredential = Pick<
+  Credential,
+  "accountName" | "siteOrApp" | "username"
+>
+
+export function indexCredentialSearch<T extends SearchableCredential>(
   credentials: T[]
 ): CredentialSearchEntry<T>[] {
   return credentials.map((credential) => ({

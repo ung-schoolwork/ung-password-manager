@@ -83,7 +83,34 @@
         <p id="vault-empty" hidden>
           Nothing saved yet. Add logins in UNG Password Manager.
         </p>
-        <ul id="vault-entries" aria-label="Saved logins"></ul>
+        <div id="vault-content" class="stack">
+          <label for="vault-search">Search your vault</label>
+          <input
+            id="vault-search"
+            type="search"
+            placeholder="Account, website, or username"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div id="site-logins" class="stack">
+            <h3 id="site-heading"></h3>
+            <ul
+              id="site-entries"
+              class="entries"
+              aria-label="Logins for this website"
+            ></ul>
+            <p id="site-empty"></p>
+          </div>
+          <div id="search-results" class="stack" hidden>
+            <h3>Search results</h3>
+            <ul
+              id="result-entries"
+              class="entries"
+              aria-label="Search results"
+            ></ul>
+            <p id="results-empty" role="status"></p>
+          </div>
+        </div>
         <div class="row">
           <button id="open-vault" class="secondary" type="button">
             Open UNG Password Manager

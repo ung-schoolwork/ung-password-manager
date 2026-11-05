@@ -21,10 +21,15 @@ const email = "popup@example.test"
 const password = "popup password 1234"
 const wrongPassword = "not the password 1234"
 const revision = "3f2b8c1e-7a4d-4e5f-9a1b-2c3d4e5f6a7b"
-const credential = (id: string, accountName: string, username: string) => ({
+const credential = (
+  id: string,
+  accountName: string,
+  username: string,
+  siteOrApp = `${id}.example.test`
+) => ({
   id,
   accountName,
-  siteOrApp: `${id}.example.test`,
+  siteOrApp,
   username,
   password: `secret-${id}`,
   createdAt: "2026-11-05T00:00:00.000Z",
@@ -36,6 +41,14 @@ const data: VaultDataV1 = {
   credentials: [
     credential("b", "University email", "student"),
     credential("a", "Bank", "student.bank"),
+    credential(
+      "c",
+      "Course portal",
+      "student.portal",
+      "https://www.portal.example.test/login"
+    ),
+    credential("d", "Portal admin", "admin", "admin.portal.example.test"),
+    credential("e", "Lookalike", "someone", "evil-portal.example.test"),
   ],
 }
 
@@ -128,7 +141,7 @@ const send = (async (request: ExtensionRequest) => {
   return answer()
 }) as Send
 
-function popup() {
+function popup(tabUrl: string | null = null) {
   const views: PopupView[] = []
   const controller = new PopupController({
     send,
@@ -136,6 +149,7 @@ function popup() {
     approvalPollMs: 5,
     vaultPollMs: 5,
     deriveKeys,
+    tabUrl,
   })
   return { controller, views }
 }
@@ -158,7 +172,7 @@ const shown = (name: PopupView["name"]) => (view: PopupView) =>
 
 describe("popup sign-in", () => {
   it("signs in, shows the approval code without any vault data, then opens the vault once approved", async () => {
-    const { controller } = popup()
+    const { controller } = popup("https://a.example.test/sign-in")
     await controller.start()
     expect(controller.current).toEqual({
       name: "sign-in",
@@ -190,20 +204,18 @@ describe("popup sign-in", () => {
     expect(vault).toEqual({
       name: "vault",
       email,
-      entries: [
+      site: "a.example.test",
+      siteEntries: [
         {
           id: "a",
           accountName: "Bank",
           siteOrApp: "a.example.test",
           username: "student.bank",
         },
-        {
-          id: "b",
-          accountName: "University email",
-          siteOrApp: "b.example.test",
-          username: "student",
-        },
       ],
+      query: "",
+      results: null,
+      total: 5,
     })
     expect(JSON.stringify(vault)).not.toContain("secret-")
     controller.dispose()
@@ -248,7 +260,15 @@ describe("popup sign-in", () => {
     } finally {
       envelope = original
     }
-    expect(controller.current).toEqual({ name: "vault", email, entries: [] })
+    expect(controller.current).toEqual({
+      name: "vault",
+      email,
+      site: null,
+      siteEntries: [],
+      query: "",
+      results: null,
+      total: 0,
+    })
     controller.dispose()
   })
 })
@@ -340,6 +360,77 @@ describe("popup vault access", () => {
     await unlocking
     expect(views.some((view) => view.name === "vault")).toBe(false)
     expect(controller.current.name).toBe("unlock")
+    controller.dispose()
+  })
+})
+
+describe("popup current site and search", () => {
+  async function openVault(tabUrl: string | null) {
+    server.signedIn = true
+    server.approved = true
+    const { controller } = popup(tabUrl)
+    await controller.start()
+    await controller.unlock(password)
+    const view = controller.current
+    if (view.name !== "vault") throw new Error(`Showing ${view.name}`)
+    return { controller, view }
+  }
+
+  const ids = (entries: { id: string }[] | null) =>
+    entries?.map(({ id }) => id) ?? null
+
+  it("lists the logins saved for the current tab's site and its parent domains", async () => {
+    const signIn = await openVault("https://sign-in.portal.example.test/x")
+    expect(signIn.view.site).toBe("sign-in.portal.example.test")
+    expect(ids(signIn.view.siteEntries)).toEqual(["c"])
+    signIn.controller.dispose()
+
+    const admin = await openVault("https://admin.portal.example.test/")
+    expect(ids(admin.view.siteEntries)).toEqual(["c", "d"])
+    admin.controller.dispose()
+
+    // A lookalike site only gets its own login.
+    const lookalike = await openVault("https://evil-portal.example.test/")
+    expect(ids(lookalike.view.siteEntries)).toEqual(["e"])
+    lookalike.controller.dispose()
+  })
+
+  it("has no site for browser pages and when the tab's address is unknown", async () => {
+    for (const tabUrl of ["chrome://newtab/", "file:///tmp/a.html", null]) {
+      const { controller, view } = await openVault(tabUrl)
+      expect(view.site).toBeNull()
+      expect(view.siteEntries).toEqual([])
+      expect(view.total).toBe(5)
+      controller.dispose()
+    }
+  })
+
+  it("searches every login by account name, website, or username", async () => {
+    const { controller } = await openVault("chrome://newtab/")
+    const results = () =>
+      controller.current.name === "vault"
+        ? ids(controller.current.results)
+        : "not shown"
+
+    controller.search("STUDENT")
+    expect(results()).toEqual(["a", "c", "b"])
+    expect(controller.current).toMatchObject({ query: "STUDENT" })
+    controller.search("portal admin")
+    expect(results()).toEqual(["d"])
+    controller.search("evil-portal")
+    expect(results()).toEqual(["e"])
+    controller.search("secret-")
+    expect(results()).toEqual([])
+    controller.search("   ")
+    expect(results()).toBeNull()
+
+    // Locking forgets the search along with the logins.
+    controller.search("bank")
+    controller.lock()
+    controller.search("bank")
+    expect(controller.current.name).toBe("unlock")
+    await controller.unlock(password)
+    expect(controller.current).toMatchObject({ query: "", results: null })
     controller.dispose()
   })
 })
