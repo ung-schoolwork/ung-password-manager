@@ -15,6 +15,7 @@ export interface CredentialDraft {
 
 export interface Credential extends CredentialDraft {
   id: string
+  sourceShareId?: string
   createdAt: string
   updatedAt: string
   passwordUpdatedAt: string

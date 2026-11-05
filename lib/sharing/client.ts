@@ -17,10 +17,7 @@ export interface IncomingShare {
   createdAt: string
 }
 
-async function sharesRequest<T>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
+async function sharesRequest<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
     response = await fetch(`/api/shares${path}`, {
@@ -65,5 +62,10 @@ export async function listIncomingShares(): Promise<IncomingShare[]> {
 }
 
 export async function respondToShare(id: string): Promise<void> {
-  await sharesRequest(`/${encodeURIComponent(id)}`, { method: "DELETE" })
+  try {
+    await sharesRequest(`/${encodeURIComponent(id)}`, { method: "DELETE" })
+  } catch (error) {
+    if (error instanceof ShareRequestError && error.status === 404) return
+    throw error
+  }
 }

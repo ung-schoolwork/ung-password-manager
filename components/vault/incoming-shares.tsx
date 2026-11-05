@@ -23,17 +23,20 @@ export function IncomingShares() {
   const [shares, setShares] = useState<IncomingShare[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Shares whose credential has already been saved to the vault. Accepting
-  // saves the credential and then removes the share; if the removal fails,
-  // the share stays listed and a retry must not save a second copy.
-  const savedShareIdsRef = useRef<Set<string>>(new Set())
+  const refreshVersionRef = useRef(0)
 
   const refresh = useCallback(async () => {
+    const version = ++refreshVersionRef.current
     try {
-      setShares(await listIncomingShares())
-      setError(null)
+      const latestShares = await listIncomingShares()
+      if (version === refreshVersionRef.current) {
+        setShares(latestShares)
+        setError(null)
+      }
     } catch {
-      setError("Could not check for shared credentials.")
+      if (version === refreshVersionRef.current) {
+        setError("Could not check for shared credentials.")
+      }
     }
   }, [])
 
@@ -43,14 +46,11 @@ export function IncomingShares() {
   }, [refresh])
 
   async function handleAccept(share: IncomingShare) {
+    refreshVersionRef.current++
     setBusyId(share.id)
     try {
-      if (!savedShareIdsRef.current.has(share.id)) {
-        await addCredential(share.credential)
-        savedShareIdsRef.current.add(share.id)
-      }
+      await addCredential(share.credential, share.id)
       await respondToShare(share.id)
-      savedShareIdsRef.current.delete(share.id)
       setShares((current) => current.filter((item) => item.id !== share.id))
       setError(null)
     } catch {
@@ -61,6 +61,7 @@ export function IncomingShares() {
   }
 
   async function handleDecline(share: IncomingShare) {
+    refreshVersionRef.current++
     setBusyId(share.id)
     try {
       await respondToShare(share.id)

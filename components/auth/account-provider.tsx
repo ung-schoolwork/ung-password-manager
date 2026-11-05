@@ -19,6 +19,7 @@ import {
   withAccountMutation,
   type AccountSession,
 } from "@/lib/auth/client"
+import { ACCOUNT_ERROR_MESSAGES } from "@/lib/auth/messages"
 
 type AccountStatus = "loading" | "signed-out" | "signed-in" | "error"
 interface AccountContextValue {
@@ -59,7 +60,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       if (signedOutLocally.current) return
       if (signOutIsPending()) {
         forget()
-        setError("Sign-out could not be completed. Try signing out again.")
+        setError(ACCOUNT_ERROR_MESSAGES.session.signOutFailed)
         return
       }
       if (refreshing.current) {
@@ -86,7 +87,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           setError(null)
         } else {
           setStatus("error")
-          setError("Your account could not be reached. Try again.")
+          setError(ACCOUNT_ERROR_MESSAGES.request.accountUnavailable)
         }
       } finally {
         refreshing.current = false
@@ -170,7 +171,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           current !== generation.current ||
           signOutAtStart !== signOutGeneration()
         )
-          throw new Error("Sign-in was interrupted. Try again.")
+          throw new Error(ACCOUNT_ERROR_MESSAGES.session.signInInterrupted)
         if (signOutIsPending()) {
           await accountRequest("logout", {})
           markSignOutPending(false)
@@ -179,7 +180,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           current !== generation.current ||
           signOutAtStart !== signOutGeneration()
         )
-          throw new Error("Sign-in was interrupted. Try again.")
+          throw new Error(ACCOUNT_ERROR_MESSAGES.session.signInInterrupted)
         const next = await accountRequest<AccountSession>(mode, {
           email,
           password,
@@ -197,9 +198,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
             markSignOutPending(false)
             channel.current?.postMessage("sign-out-complete")
           } catch {
-            setError("Sign-out could not be completed. Try signing out again.")
+            setError(ACCOUNT_ERROR_MESSAGES.session.signOutFailed)
           }
-          throw new Error("Sign-in was interrupted. Try again.")
+          throw new Error(ACCOUNT_ERROR_MESSAGES.session.signInInterrupted)
         }
         markSignOutPending(false)
         signedOutLocally.current = false
@@ -224,7 +225,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       channel.current?.postMessage("sign-out-complete")
     } catch {
       if (current === generation.current)
-        setError("Sign-out could not be completed. Try signing out again.")
+        setError(ACCOUNT_ERROR_MESSAGES.session.signOutFailed)
     }
   }, [forget])
 

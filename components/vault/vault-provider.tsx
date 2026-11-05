@@ -47,7 +47,10 @@ interface VaultContextValue {
   createVault(passphrase: string): Promise<void>
   unlockVault(passphrase: string): Promise<void>
   lockVault(): void
-  addCredential(draft: CredentialDraft): Promise<Credential>
+  addCredential(
+    draft: CredentialDraft,
+    sourceShareId?: string
+  ): Promise<Credential>
   updateCredential(
     id: string,
     patch: Partial<CredentialDraft>,
@@ -311,11 +314,11 @@ function ApprovedVaultProvider({
   }, [])
 
   const addCredential = useCallback(
-    async (draft: CredentialDraft) => {
+    async (draft: CredentialDraft, sourceShareId?: string) => {
       const service = requireService()
       setBusy(true)
       try {
-        const credential = await service.saveCredential(draft)
+        const credential = await service.saveCredential(draft, sourceShareId)
         refreshCredentials(service)
         await syncVaultRevision(service)
         return credential

@@ -169,12 +169,16 @@ export class VaultService {
     return data.credentials.map((credential) => ({ ...credential }))
   }
 
-  async saveCredential(draft: CredentialDraft): Promise<Credential> {
+  async saveCredential(
+    draft: CredentialDraft,
+    sourceShareId?: string
+  ): Promise<Credential> {
     const normalized = validateCredentialDraft(draft)
     const timestamp = this.dependencies.now().toISOString()
     const credential: Credential = {
       ...normalized,
       id: this.dependencies.createId(),
+      ...(sourceShareId === undefined ? {} : { sourceShareId }),
       createdAt: timestamp,
       updatedAt: timestamp,
       passwordUpdatedAt: timestamp,
@@ -182,6 +186,12 @@ export class VaultService {
 
     for (let attempt = 1; ; attempt++) {
       const { data } = this.requireUnlocked()
+      if (sourceShareId) {
+        const existing = data.credentials.find(
+          (item) => item.sourceShareId === sourceShareId
+        )
+        if (existing) return { ...existing }
+      }
       try {
         await this.persist({
           ...data,

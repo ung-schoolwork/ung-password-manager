@@ -119,6 +119,28 @@ describe("VaultService", () => {
     )
   })
 
+  it("accepts a shared credential only once across vault reloads", async () => {
+    const repository = new MemoryVaultRepository()
+    const service = createService(repository)
+    await service.createVault(passphrase)
+
+    const first = await service.saveCredential(validDraft, "share-123")
+    const retry = await service.saveCredential(validDraft, "share-123")
+    expect(retry).toEqual(first)
+    expect(service.listCredentials()).toEqual([first])
+
+    service.lockVault()
+    const reloadedService = createService(repository)
+    await reloadedService.unlockVault(passphrase)
+    const retriedAfterReload = await reloadedService.saveCredential(
+      validDraft,
+      "share-123"
+    )
+
+    expect(retriedAfterReload).toEqual(first)
+    expect(reloadedService.listCredentials()).toEqual([first])
+  })
+
   it("does not mutate committed state when persistence fails", async () => {
     const repository = new MemoryVaultRepository()
     const service = createService(repository)
