@@ -22,6 +22,9 @@
 # production
 /build
 
+# built Chrome extension (bun run build:extension)
+/extension/dist/
+
 # deployment
 .vercel
 
