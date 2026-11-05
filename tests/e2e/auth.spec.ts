@@ -48,7 +48,7 @@ test("one password registers, signs in, and opens the vault; sign-out clears pri
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click()
-  await expect(page.locator("form").getByRole("alert")).toHaveText(
+  await expect(page.locator("#account-password-confirmation-error")).toHaveText(
     "The passwords do not match."
   )
   await page.getByLabel("Confirm password").fill(accountPassword)
@@ -82,7 +82,7 @@ test("one password registers, signs in, and opens the vault; sign-out clears pri
     .fill("wrong-account-password")
   await page.getByRole("button", { name: "Sign in", exact: true }).click()
   await expect(page.locator("form").getByRole("alert")).toHaveText(
-    "Invalid credentials"
+    "Email or password is incorrect. Check your details and try again."
   )
   await signIn(page, email)
   // Signing in opens the vault directly.
@@ -117,9 +117,251 @@ test("one password registers, signs in, and opens the vault; sign-out clears pri
     .getByLabel("Password", { exact: true })
     .fill("wrong-account-password")
   await page.getByRole("button", { name: "Unlock vault" }).click()
-  await expect(page.locator("form").getByRole("alert")).toBeVisible()
+  await expect(page.locator("form").getByRole("alert")).toHaveText(
+    "That password didn’t open your vault. Enter the password you use to sign in."
+  )
   await unlockVault(page)
   await expect(page.getByText("private-user", { exact: true })).toBeVisible()
+})
+
+test("validates sign-in fields before sending the request", async ({
+  page,
+}) => {
+  let loginRequests = 0
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unauthorized" }),
+    })
+  )
+  await page.route("**/api/auth/login", (route) => {
+    if (route.request().method() === "POST") loginRequests++
+    return route.continue()
+  })
+
+  await page.goto("/sign-in")
+  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  expect(loginRequests).toBe(0)
+
+  const email = page.getByLabel("Email", { exact: true })
+  const password = page.getByLabel("Password", { exact: true })
+  await expect(email).toHaveAttribute("aria-invalid", "true")
+  await expect(email).toHaveAttribute("aria-describedby", "account-email-error")
+  await expect(page.locator("#account-email-error")).toHaveText(
+    "Enter your email address."
+  )
+  await expect(password).toHaveAttribute("aria-invalid", "true")
+  await expect(password).toHaveAttribute(
+    "aria-describedby",
+    "account-password-error"
+  )
+  await expect(page.locator("#account-password-error")).toHaveText(
+    "Enter your password."
+  )
+
+  await email.fill("invalid-email")
+  await password.fill("short")
+  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  expect(loginRequests).toBe(0)
+  await expect(page.locator("#account-email-error")).toHaveText(
+    "Enter a valid email address."
+  )
+  await expect(page.locator("#account-password-error")).toHaveText(
+    "Password must be at least 12 characters."
+  )
+})
+
+test("validates registration fields accessibly before sending the request", async ({
+  page,
+}) => {
+  let registrationRequests = 0
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unauthorized" }),
+    })
+  )
+  await page.route("**/api/auth/register", (route) => {
+    if (route.request().method() === "POST") registrationRequests++
+    return route.continue()
+  })
+
+  await page.goto("/register")
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click()
+  expect(registrationRequests).toBe(0)
+
+  const email = page.getByLabel("Email", { exact: true })
+  const password = page.getByLabel("Password", { exact: true })
+  const confirmation = page.getByLabel("Confirm password")
+  await expect(email).toHaveAttribute("aria-invalid", "true")
+  await expect(email).toHaveAttribute("aria-describedby", "account-email-error")
+  await expect(page.locator("#account-email-error")).toHaveText(
+    "Enter your email address."
+  )
+  await expect(password).toHaveAttribute("aria-invalid", "true")
+  await expect(password).toHaveAttribute(
+    "aria-describedby",
+    "account-password-help account-password-error"
+  )
+  await expect(page.locator("#account-password-error")).toHaveText(
+    "Enter your password."
+  )
+  await expect(confirmation).toHaveAttribute("aria-invalid", "true")
+  await expect(confirmation).toHaveAttribute(
+    "aria-describedby",
+    "account-password-confirmation-error"
+  )
+  await expect(page.locator("#account-password-confirmation-error")).toHaveText(
+    "Confirm your password."
+  )
+
+  await email.fill("not-an-email")
+  await password.fill("short")
+  await confirmation.fill("different-short")
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click()
+  expect(registrationRequests).toBe(0)
+  await expect(page.locator("#account-email-error")).toHaveText(
+    "Enter a valid email address."
+  )
+  await expect(page.locator("#account-password-error")).toHaveText(
+    "Password must be at least 12 characters."
+  )
+  await expect(page.locator("#account-password-confirmation-error")).toHaveText(
+    "The passwords do not match."
+  )
+})
+
+test("shows actionable, non-verbatim sign-in failure messages", async ({
+  page,
+}) => {
+  let outcome:
+    { status: number; body: string; retryAfter?: string } | "network" = {
+    status: 401,
+    body: "Invalid credentials",
+  }
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unauthorized" }),
+    })
+  )
+  await page.route("**/api/auth/login", (route) => {
+    if (outcome === "network") return route.abort("failed")
+    return route.fulfill({
+      status: outcome.status,
+      headers: outcome.retryAfter
+        ? { "Retry-After": outcome.retryAfter }
+        : undefined,
+      contentType: "application/json",
+      body: JSON.stringify({ error: outcome.body }),
+    })
+  })
+
+  await page.goto("/sign-in")
+  const email = page.getByLabel("Email", { exact: true })
+  const password = page.getByLabel("Password", { exact: true })
+  const submit = page.getByRole("button", { name: "Sign in", exact: true })
+  const alert = page.locator("form").getByRole("alert")
+  const submitAttempt = async () => {
+    await email.fill("user@example.test")
+    await password.fill("valid-password-123")
+    await submit.click()
+  }
+
+  await submitAttempt()
+  await expect(alert).toHaveText(
+    "Email or password is incorrect. Check your details and try again."
+  )
+
+  outcome = { status: 403, body: "Forbidden" }
+  await submitAttempt()
+  await expect(alert).toHaveText(
+    "This request was blocked. Refresh the page and try again."
+  )
+  outcome = { status: 429, body: "Too many attempts", retryAfter: "45" }
+  await submitAttempt()
+  await expect(alert).toHaveText(
+    "Too many attempts. Wait 45 seconds before trying again."
+  )
+  outcome = { status: 429, body: "Too many attempts", retryAfter: "900" }
+  await submitAttempt()
+  await expect(alert).toHaveText(
+    "Too many attempts. Wait 15 minutes before trying again."
+  )
+  outcome = { status: 503, body: "Service unavailable" }
+  await submitAttempt()
+  await expect(alert).toHaveText(
+    "The server is unavailable right now. Try again in a few moments."
+  )
+  outcome = "network"
+  await submitAttempt()
+  await expect(alert).toHaveText(
+    "Unable to reach the server. Check your connection and try again."
+  )
+})
+
+test("sign-in gives the same message for a wrong password and an unknown email", async ({
+  page,
+}) => {
+  const user = await registerAccount(page)
+  // Registering signed this browser in; start signed out.
+  await page.context().clearCookies()
+  await page.goto("/sign-in")
+  const alert = page.locator("form").getByRole("alert")
+  const expected =
+    "Email or password is incorrect. Check your details and try again."
+
+  await page.getByLabel("Email", { exact: true }).fill(user.email)
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("wrong-account-password")
+  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  await expect(alert).toHaveText(expected)
+
+  await page
+    .getByLabel("Email", { exact: true })
+    .fill(`unknown-${crypto.randomUUID()}@example.test`)
+  await expect(alert).toHaveCount(0)
+  await page.getByLabel("Password", { exact: true }).fill(accountPassword)
+  await page.getByRole("button", { name: "Sign in", exact: true }).click()
+  await expect(alert).toHaveText(expected)
+})
+
+test("shows actionable registration failures without exposing server text", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unauthorized" }),
+    })
+  )
+  await page.route("**/api/auth/register", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unable to register account" }),
+    })
+  )
+
+  await page.goto("/register")
+  await page.getByLabel("Email", { exact: true }).fill("existing@example.test")
+  await page.getByLabel("Password", { exact: true }).fill("valid-password-123")
+  await page.getByLabel("Confirm password").fill("valid-password-123")
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click()
+  await expect(page.locator("form").getByRole("alert")).toHaveText(
+    "Could not create an account with these details. If you already have an account, sign in; otherwise try again."
+  )
 })
 
 test("isolates accounts and ignores a pre-account local vault", async ({

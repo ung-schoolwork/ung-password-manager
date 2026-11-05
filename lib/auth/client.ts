@@ -1,3 +1,4 @@
+import { ACCOUNT_ERROR_MESSAGES } from "@/lib/auth/messages"
 import type { WrappedVaultKey } from "@/lib/vault/types"
 
 export interface AccountSession {
@@ -28,8 +29,9 @@ export async function accountRequest<T>(
     throw new AccountRequestError(
       typeof data?.error === "string"
         ? data.error
-        : "Your account could not be reached. Try again.",
-      response.status
+        : ACCOUNT_ERROR_MESSAGES.request.accountUnavailable,
+      response.status,
+      response.headers.get("Retry-After")
     )
   }
   return data as T
@@ -38,7 +40,8 @@ export async function accountRequest<T>(
 export class AccountRequestError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly retryAfter: string | null = null
   ) {
     super(message)
     this.name = "AccountRequestError"

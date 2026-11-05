@@ -13,6 +13,7 @@ import {
   throttled,
   User,
 } from "@/lib/auth/server"
+import { ACCOUNT_CREATED_SIGN_IN_FAILED } from "@/lib/auth/shared"
 
 export const runtime = "nodejs"
 export async function POST(request: Request) {
@@ -45,10 +46,7 @@ export async function POST(request: Request) {
       try {
         await User.deleteOne({ _id: user._id })
       } catch {
-        return json(
-          { error: "Account created but sign-in failed. Please sign in." },
-          503
-        )
+        return json({ error: ACCOUNT_CREATED_SIGN_IN_FAILED }, 503)
       }
       return failure()
     }

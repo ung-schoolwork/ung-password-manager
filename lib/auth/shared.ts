@@ -5,6 +5,10 @@ export const ACCOUNT_PASSWORD_MIN_LENGTH = 12
 export const ACCOUNT_PASSWORD_MAX_LENGTH = 128
 export const ACCOUNT_EMAIL_MAX_LENGTH = 254
 
+/** Sent with a 503 when registration created the account but not a session. */
+export const ACCOUNT_CREATED_SIGN_IN_FAILED =
+  "Account created but sign-in failed. Please sign in."
+
 /**
  * The canonical form of an account email. The vault key is derived from it,
  * so every client must normalize exactly the same way.

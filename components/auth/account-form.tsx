@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation"
 import { useState, type FormEvent } from "react"
 import { ShieldCheck } from "lucide-react"
 import { useAccount } from "@/components/auth/account-provider"
+import {
+  accountFailureMessage,
+  validateAccountFields,
+  type AccountFieldErrors,
+} from "@/lib/auth/feedback"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -15,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
+  ACCOUNT_EMAIL_MAX_LENGTH,
   ACCOUNT_PASSWORD_MAX_LENGTH,
   ACCOUNT_PASSWORD_MIN_LENGTH,
 } from "@/lib/auth/shared"
@@ -33,25 +39,43 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
   const [password, setPassword] = useState("")
   const [confirmation, setConfirmation] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<AccountFieldErrors>({})
+  const [validationAttempted, setValidationAttempted] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  function edited(next: {
+    email?: string
+    password?: string
+    confirmation?: string
+  }) {
+    setError(null)
+    if (!validationAttempted) return
+    setFieldErrors(
+      validateAccountFields(
+        mode,
+        next.email ?? email,
+        next.password ?? password,
+        next.confirmation ?? confirmation
+      )
+    )
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
-    if (registering && password !== confirmation) {
-      setError("The passwords do not match.")
+    const errors = validateAccountFields(mode, email, password, confirmation)
+    setFieldErrors(errors)
+    // Re-check fields as the user types only while a field problem is shown.
+    setValidationAttempted(Object.keys(errors).length > 0)
+    if (Object.keys(errors).length > 0) {
       return
     }
     setBusy(true)
     try {
-      await authenticate(mode, email, password)
+      await authenticate(mode, email.trim(), password)
       router.replace("/vault")
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not sign in. Try again."
-      )
+      setError(accountFailureMessage(caught, mode))
     } finally {
       setPassword("")
       setConfirmation("")
@@ -88,7 +112,7 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
               </Button>
             </div>
           ) : null}
-          <form onSubmit={submit} className="space-y-5">
+          <form onSubmit={submit} className="space-y-5" noValidate>
             <div className="space-y-2">
               <Label htmlFor="account-email">Email</Label>
               <Input
@@ -96,11 +120,27 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                 type="email"
                 autoComplete="email"
                 required
-                maxLength={254}
+                maxLength={ACCOUNT_EMAIL_MAX_LENGTH}
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                aria-invalid={Boolean(fieldErrors.email)}
+                aria-describedby={
+                  fieldErrors.email ? "account-email-error" : undefined
+                }
+                onChange={(event) => {
+                  setEmail(event.target.value)
+                  edited({ email: event.target.value })
+                }}
                 disabled={busy}
               />
+              {fieldErrors.email ? (
+                <p
+                  id="account-email-error"
+                  role="alert"
+                  className="text-sm text-destructive"
+                >
+                  {fieldErrors.email}
+                </p>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label htmlFor="account-password">Password</Label>
@@ -112,11 +152,20 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                 minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
                 maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                disabled={busy}
+                aria-invalid={Boolean(fieldErrors.password)}
                 aria-describedby={
-                  registering ? "account-password-help" : undefined
+                  [
+                    registering ? "account-password-help" : null,
+                    fieldErrors.password ? "account-password-error" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
                 }
+                onChange={(event) => {
+                  setPassword(event.target.value)
+                  edited({ password: event.target.value })
+                }}
+                disabled={busy}
               />
               {registering ? (
                 <p
@@ -127,6 +176,15 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                   {ACCOUNT_PASSWORD_MAX_LENGTH} characters. Your vault is
                   encrypted with this password, so if you forget it your saved
                   passwords can’t be recovered.
+                </p>
+              ) : null}
+              {fieldErrors.password ? (
+                <p
+                  id="account-password-error"
+                  role="alert"
+                  className="text-sm text-destructive"
+                >
+                  {fieldErrors.password}
                 </p>
               ) : null}
             </div>
@@ -143,9 +201,27 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                   minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
                   maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                   value={confirmation}
-                  onChange={(event) => setConfirmation(event.target.value)}
+                  aria-invalid={Boolean(fieldErrors.confirmation)}
+                  aria-describedby={
+                    fieldErrors.confirmation
+                      ? "account-password-confirmation-error"
+                      : undefined
+                  }
+                  onChange={(event) => {
+                    setConfirmation(event.target.value)
+                    edited({ confirmation: event.target.value })
+                  }}
                   disabled={busy}
                 />
+                {fieldErrors.confirmation ? (
+                  <p
+                    id="account-password-confirmation-error"
+                    role="alert"
+                    className="text-sm text-destructive"
+                  >
+                    {fieldErrors.confirmation}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {error ? (

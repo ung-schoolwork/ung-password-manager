@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useVault } from "@/components/vault/vault-provider"
+import { vaultUnlockFailureMessage } from "@/lib/auth/feedback"
 import { formatDeviceCode } from "@/lib/devices/shared"
 
 export function VaultGate() {
@@ -102,11 +103,7 @@ export function VaultGate() {
     try {
       await unlockVault(password)
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "The vault could not be opened."
-      )
+      setError(vaultUnlockFailureMessage(caught))
     } finally {
       setPassword("")
     }
