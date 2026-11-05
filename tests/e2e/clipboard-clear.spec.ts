@@ -181,3 +181,91 @@ test("leaves the clipboard alone if it no longer holds the copied value", async 
   await page.waitForTimeout(CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS)
   expect(await readClipboard(page)).toBe("something-else-entirely")
 })
+
+// The generator sits behind the vault, so open it and reach the page through
+// the nav like a user would (the unlocked vault survives the client-side
+// navigation).
+async function openGenerator(page: Page) {
+  await page.goto("/")
+  await unlockVault(page)
+
+  // An empty vault opens the add dialog; close it to reach the navigation.
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeHidden()
+
+  await page.getByRole("link", { name: "Generator" }).click()
+  await expect(page).toHaveURL(/\/generate$/)
+}
+
+// The Copy button on the generator page uses the same auto-clear as the saved
+// credentials (SCRUM-63). Its label flips to "Copied" for two seconds, so the
+// locator accepts both.
+async function copyGeneratedPassword(page: Page) {
+  const copyButton = page.getByRole("button", {
+    name: /^(Copy password|Copied)$/,
+  })
+  await expect(copyButton).toBeEnabled()
+  await copyButton.click()
+  await expect.poll(() => readClipboard(page)).not.toBe("")
+  return readClipboard(page)
+}
+
+test("clears a password copied from the generator after the timer", async ({
+  page,
+}) => {
+  await openGenerator(page)
+  await copyGeneratedPassword(page)
+
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2,
+    })
+    .toBe("")
+})
+
+test("clears a generator password on the second deadline when it is copied again", async ({
+  page,
+}) => {
+  await openGenerator(page)
+  await copyGeneratedPassword(page)
+  const firstCopiedAt = Date.now()
+
+  await waitUntil(
+    page,
+    firstCopiedAt + CLIPBOARD_CLEAR_MS * SECOND_COPY_FRACTION
+  )
+  const copiedAgain = await copyGeneratedPassword(page)
+
+  // Past the first timer's deadline, before the second one is due.
+  await waitUntil(
+    page,
+    firstCopiedAt + CLIPBOARD_CLEAR_MS + FIRST_DEADLINE_MARGIN_MS
+  )
+  expect(await readClipboard(page)).toBe(copiedAgain)
+
+  await expect
+    .poll(() => readClipboard(page), {
+      timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS,
+    })
+    .toBe("")
+})
+
+test("leaves a generator password alone if the clipboard no longer holds it", async ({
+  page,
+}) => {
+  await openGenerator(page)
+  await copyGeneratedPassword(page)
+
+  // Simulate the user copying something else before our timer fires.
+  await page.evaluate(() =>
+    navigator.clipboard.writeText("something-else-entirely")
+  )
+
+  await page.waitForTimeout(CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS)
+  expect(await readClipboard(page)).toBe("something-else-entirely")
+})

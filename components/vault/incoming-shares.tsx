@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Check, Inbox, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,10 @@ export function IncomingShares() {
   const [shares, setShares] = useState<IncomingShare[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Shares whose credential has already been saved to the vault. Accepting
+  // saves the credential and then removes the share; if the removal fails,
+  // the share stays listed and a retry must not save a second copy.
+  const savedShareIdsRef = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
     try {
@@ -41,9 +45,14 @@ export function IncomingShares() {
   async function handleAccept(share: IncomingShare) {
     setBusyId(share.id)
     try {
-      await addCredential(share.credential)
+      if (!savedShareIdsRef.current.has(share.id)) {
+        await addCredential(share.credential)
+        savedShareIdsRef.current.add(share.id)
+      }
       await respondToShare(share.id)
+      savedShareIdsRef.current.delete(share.id)
       setShares((current) => current.filter((item) => item.id !== share.id))
+      setError(null)
     } catch {
       setError("Could not accept that credential. Try again.")
     } finally {

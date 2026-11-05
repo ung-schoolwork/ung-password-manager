@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "UNG Password Manager",
+  "description": "Use your UNG Password Manager account in Chrome.",
+  "version": "0.0.1",
+  "minimum_chrome_version": "120",
+  "action": {
+    "default_title": "UNG Password Manager",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": []
+}

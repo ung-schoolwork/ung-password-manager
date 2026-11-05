@@ -11,26 +11,32 @@ import { setTestClientIp } from "./fixtures"
 export const accountPassword = "account-password-only-123"
 
 /**
- * Registers through the API exactly as the registration form does: the keys
- * are derived here from the email and password, which is never sent.
+ * What the registration form sends for an email and `accountPassword`: keys
+ * derived from them, never the password. Sign-in sends the same minus
+ * `wrappedVaultKey`.
  */
-export async function registerAccount(page: Page) {
-  const clientIp = await setTestClientIp(page.context())
-  const email = `browser-${crypto.randomUUID()}@example.test`
+export async function accountProof(email: string) {
   const { authKey, wrappingKey } = await deriveAccountKeys(
     email,
     accountPassword
   )
+  return {
+    email,
+    authKey,
+    wrappedVaultKey: await createWrappedVaultKey(wrappingKey),
+  }
+}
+
+/** Registers through the API exactly as the registration form does. */
+export async function registerAccount(page: Page) {
+  const clientIp = await setTestClientIp(page.context())
+  const email = `browser-${crypto.randomUUID()}@example.test`
   const response = await page.request.post("/api/auth/register", {
     headers: {
       Origin: "http://127.0.0.1:3100",
       "x-e2e-client-ip": clientIp,
     },
-    data: {
-      email,
-      authKey,
-      wrappedVaultKey: await createWrappedVaultKey(wrappingKey),
-    },
+    data: await accountProof(email),
   })
   expect(response.status()).toBe(201)
   const session = (await response.json()) as {
