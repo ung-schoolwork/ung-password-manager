@@ -19,6 +19,11 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  ACCOUNT_EMAIL_MAX_LENGTH,
+  ACCOUNT_PASSWORD_MAX_LENGTH,
+  ACCOUNT_PASSWORD_MIN_LENGTH,
+} from "@/lib/auth/shared"
 
 export function AccountForm({ mode }: { mode: "login" | "register" }) {
   const {
@@ -38,12 +43,30 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
   const [validationAttempted, setValidationAttempted] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  function edited(next: {
+    email?: string
+    password?: string
+    confirmation?: string
+  }) {
+    setError(null)
+    if (!validationAttempted) return
+    setFieldErrors(
+      validateAccountFields(
+        mode,
+        next.email ?? email,
+        next.password ?? password,
+        next.confirmation ?? confirmation
+      )
+    )
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
-    setValidationAttempted(true)
     const errors = validateAccountFields(mode, email, password, confirmation)
     setFieldErrors(errors)
+    // Re-check fields as the user types only while a field problem is shown.
+    setValidationAttempted(Object.keys(errors).length > 0)
     if (Object.keys(errors).length > 0) {
       return
     }
@@ -70,8 +93,8 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
           </h1>
           <CardDescription>
             {registering
-              ? "Choose an account password. You’ll unlock your vault separately."
-              : "Sign in to your account, then unlock your vault."}
+              ? "Choose one password for signing in and protecting your vault."
+              : "Sign in to open your vault."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -97,25 +120,15 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                 type="email"
                 autoComplete="email"
                 required
-                maxLength={254}
+                maxLength={ACCOUNT_EMAIL_MAX_LENGTH}
                 value={email}
                 aria-invalid={Boolean(fieldErrors.email)}
                 aria-describedby={
                   fieldErrors.email ? "account-email-error" : undefined
                 }
                 onChange={(event) => {
-                  const nextEmail = event.target.value
-                  setEmail(nextEmail)
-                  setError(null)
-                  if (validationAttempted)
-                    setFieldErrors(
-                      validateAccountFields(
-                        mode,
-                        nextEmail,
-                        password,
-                        confirmation
-                      )
-                    )
+                  setEmail(event.target.value)
+                  edited({ email: event.target.value })
                 }}
                 disabled={busy}
               />
@@ -130,14 +143,14 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
               ) : null}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="account-password">Account password</Label>
+              <Label htmlFor="account-password">Password</Label>
               <Input
                 id="account-password"
                 type="password"
                 autoComplete={registering ? "new-password" : "current-password"}
                 required
-                minLength={12}
-                maxLength={128}
+                minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+                maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                 value={password}
                 aria-invalid={Boolean(fieldErrors.password)}
                 aria-describedby={
@@ -149,18 +162,8 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                     .join(" ") || undefined
                 }
                 onChange={(event) => {
-                  const nextPassword = event.target.value
-                  setPassword(nextPassword)
-                  setError(null)
-                  if (validationAttempted)
-                    setFieldErrors(
-                      validateAccountFields(
-                        mode,
-                        email,
-                        nextPassword,
-                        confirmation
-                      )
-                    )
+                  setPassword(event.target.value)
+                  edited({ password: event.target.value })
                 }}
                 disabled={busy}
               />
@@ -169,8 +172,10 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                   id="account-password-help"
                   className="text-xs text-muted-foreground"
                 >
-                  Use 12 to 128 characters. Choose a different password for your
-                  vault.
+                  Use {ACCOUNT_PASSWORD_MIN_LENGTH} to{" "}
+                  {ACCOUNT_PASSWORD_MAX_LENGTH} characters. Your vault is
+                  encrypted with this password, so if you forget it your saved
+                  passwords can’t be recovered.
                 </p>
               ) : null}
               {fieldErrors.password ? (
@@ -186,15 +191,15 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
             {registering ? (
               <div className="space-y-2">
                 <Label htmlFor="account-password-confirmation">
-                  Confirm account password
+                  Confirm password
                 </Label>
                 <Input
                   id="account-password-confirmation"
                   type="password"
                   autoComplete="new-password"
                   required
-                  minLength={12}
-                  maxLength={128}
+                  minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+                  maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                   value={confirmation}
                   aria-invalid={Boolean(fieldErrors.confirmation)}
                   aria-describedby={
@@ -203,18 +208,8 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
                       : undefined
                   }
                   onChange={(event) => {
-                    const nextConfirmation = event.target.value
-                    setConfirmation(nextConfirmation)
-                    setError(null)
-                    if (validationAttempted)
-                      setFieldErrors(
-                        validateAccountFields(
-                          mode,
-                          email,
-                          password,
-                          nextConfirmation
-                        )
-                      )
+                    setConfirmation(event.target.value)
+                    edited({ confirmation: event.target.value })
                   }}
                   disabled={busy}
                 />

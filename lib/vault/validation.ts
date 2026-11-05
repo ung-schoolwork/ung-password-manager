@@ -6,8 +6,6 @@ import {
   type VaultDataV1,
 } from "@/lib/vault/types"
 
-export const MASTER_PASSPHRASE_MIN_LENGTH = 12
-
 export type CredentialField =
   "accountName" | "siteOrApp" | "username" | "password"
 
@@ -18,14 +16,6 @@ export class CredentialValidationError extends Error {
     super("Credential information is incomplete.")
     this.name = "CredentialValidationError"
     this.fields = fields
-  }
-}
-
-export function validateMasterPassphrase(passphrase: string): void {
-  if (passphrase.length < MASTER_PASSPHRASE_MIN_LENGTH) {
-    throw new Error(
-      `Vault password must be at least ${MASTER_PASSPHRASE_MIN_LENGTH} characters.`
-    )
   }
 }
 
@@ -69,8 +59,6 @@ function isCredential(value: unknown): value is Credential {
     typeof value.siteOrApp === "string" &&
     typeof value.username === "string" &&
     typeof value.password === "string" &&
-    (value.sourceShareId === undefined ||
-      typeof value.sourceShareId === "string") &&
     (value.notes === undefined || typeof value.notes === "string") &&
     (value.riskLevel === undefined ||
       (typeof value.riskLevel === "string" &&

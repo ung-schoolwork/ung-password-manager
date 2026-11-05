@@ -16,9 +16,10 @@ import {
   Attempt,
   SESSION_LIFETIME_MS,
   limited,
-  hashPassword,
+  hashAuthKey,
   HashBusyError,
 } from "../../../lib/auth/server"
+import { accountBody, authKeyFor } from "./account-body"
 
 const origin = "http://127.0.0.1:3100"
 const prefix = `auth-${randomUUID()}`
@@ -31,7 +32,8 @@ function post(
   email: string,
   password: string,
   ip: string | null = source,
-  requestOrigin: string | null = origin
+  requestOrigin: string | null = origin,
+  body: object = accountBody(email, password)
 ) {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -42,7 +44,7 @@ function post(
   return new Request(`${origin}/api/auth`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(body),
   })
 }
 function cookie(response: Response) {
@@ -100,7 +102,8 @@ after(async () => {
 
 describe("real MongoDB auth routes", () => {
   it("registers, verifies, logs in, isolates and revokes sessions without storing raw secrets", async () => {
-    const created = await register(post(` ${email.toUpperCase()} `, password))
+    const sent = accountBody(` ${email.toUpperCase()} `, password)
+    const created = await register(post(email, password, source, origin, sent))
     assert.equal(created.status, 201)
     const body = await created.json()
     assert.deepEqual(Object.keys(body).sort(), ["expiresAt", "user"])
@@ -115,12 +118,15 @@ describe("real MongoDB auth routes", () => {
       assert.ok(flags.toLowerCase().includes(flag))
     const first = cookie(created)
     const stored = (await User.findOne({ email }).lean()) as {
-      passwordHash: string
+      authKeyHash: string
       salt: string
+      wrappedVaultKey: unknown
     }
-    assert.notEqual(stored.passwordHash, password)
-    assert.match(stored.passwordHash, /^scrypt-v1\$[a-f0-9]{128}$/)
+    assert.notEqual(stored.authKeyHash, sent.authKey)
+    assert.match(stored.authKeyHash, /^scrypt-v1\$[a-f0-9]{128}$/)
     assert.equal(stored.salt.length, 32)
+    // Stored as sent: only the browser can unwrap it.
+    assert.deepEqual(stored.wrappedVaultKey, sent.wrappedVaultKey)
     const token = first.split("=")[1]
     assert.ok(await Session.findOne({ tokenDigest: digest(token) }))
     assert.equal(await Session.findOne({ tokenDigest: token }), null)
@@ -156,9 +162,10 @@ describe("real MongoDB auth routes", () => {
   })
 
   it("bounds concurrent scrypt work", async () => {
-    const first = hashPassword(password, "first-salt")
-    const second = hashPassword(password, "second-salt")
-    await assert.rejects(hashPassword(password, "third-salt"), HashBusyError)
+    const authKey = authKeyFor(password)
+    const first = hashAuthKey(authKey, "first-salt")
+    const second = hashAuthKey(authKey, "second-salt")
+    await assert.rejects(hashAuthKey(authKey, "third-salt"), HashBusyError)
     await Promise.all([first, second])
   })
   it("creates required unique and TTL indexes before accepting requests", async () => {
@@ -251,10 +258,30 @@ describe("real MongoDB auth routes", () => {
       403
     )
     assert.equal((await login(post(email, password, "not-an-ip"))).status, 403)
-    assert.equal(
-      (await register(post(`${prefix}-bad@example.test`, "short"))).status,
-      400
-    )
+    const bad = `${prefix}-bad@example.test`
+    for (const body of [
+      // A raw password instead of the derived auth key.
+      {
+        email: bad,
+        password,
+        wrappedVaultKey: accountBody(bad, password).wrappedVaultKey,
+      },
+      { ...accountBody(bad, password), authKey: "not-a-derived-key" },
+      { ...accountBody(bad, password), wrappedVaultKey: undefined },
+      {
+        ...accountBody(bad, password),
+        wrappedVaultKey: {
+          version: 1,
+          cipher: { name: "AES-GCM", iv: "bad" },
+          wrappedKey: "",
+        },
+      },
+    ])
+      assert.equal(
+        (await register(post(bad, password, source, origin, body))).status,
+        400
+      )
+    assert.equal(await User.countDocuments({ email: bad }), 0)
   })
 
   it("enforces shared source-account caps without globally locking a target", async () => {

@@ -1,11 +1,9 @@
 import { mkdir } from "node:fs/promises"
 
-import type { Request as PlaywrightRequest } from "@playwright/test"
+import type { Request } from "@playwright/test"
 
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
-
-const vaultPassword = "correct horse battery staple"
+import { registerAccount, unlockVault } from "./account-helpers"
 
 test.beforeEach(async ({ page }) => {
   await registerAccount(page)
@@ -18,12 +16,10 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
   await page.goto("/")
 
   await expect(
-    page.getByRole("heading", { name: "Create your vault" })
+    page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
 
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await expect(page).toHaveURL(/\/vault$/)
   await expect(
@@ -143,8 +139,7 @@ test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async 
   await expect(
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
-  await page.getByLabel("Vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Unlock vault" }).click()
+  await unlockVault(page)
 
   await expect(
     page.getByText("University email", { exact: true })
@@ -155,9 +150,7 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   page,
 }) => {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
@@ -217,8 +210,7 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   await expect(
     page.getByRole("heading", { name: "Unlock your vault" })
   ).toBeVisible()
-  await page.getByLabel("Vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Unlock vault" }).click()
+  await unlockVault(page)
   await expect(
     page.getByText("Updated university account", { exact: true })
   ).toBeVisible()
@@ -244,13 +236,11 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   await expect(page.getByLabel("Risk level")).toHaveValue("high")
 })
 
-test("searches credentials locally by account, site, and username with keyboard clearing", async ({
+test("searches credentials by account, site, or username and clears accessibly without sending the query", async ({
   page,
 }) => {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
   await expect(
     page.getByRole("dialog", { name: "Add a credential" })
   ).toBeVisible()
@@ -263,7 +253,9 @@ test("searches credentials locally by account, site, and username with keyboard 
     await page.getByLabel("Account label").fill(accountName)
     await page.getByLabel("Website or app").fill(siteOrApp)
     await page.getByLabel("Username", { exact: true }).fill(username)
-    await page.getByLabel("Password", { exact: true }).fill("Search-test-123!")
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("Search-test-password-123!")
     await page.getByRole("button", { name: "Save credential" }).click()
     await expect(
       page.getByRole("dialog", { name: "Add a credential" })
@@ -283,41 +275,65 @@ test("searches credentials locally by account, site, and username with keyboard 
   const rows = page
     .getByRole("list", { name: "Saved credentials" })
     .getByRole("listitem")
-  const searchRequests: string[] = []
-  const observeRequest = (request: PlaywrightRequest) => {
-    if (request.url().includes("/api/")) {
-      searchRequests.push(`${request.url()} ${request.postData() ?? ""}`)
-    }
-  }
-  page.on("request", observeRequest)
 
-  for (const query of ["WORK", "MAIL.EXAMPLE", "ALICE@CAMPUS"]) {
-    await search.fill(query)
-    await expect(rows).toHaveCount(1)
-    await expect(rows.first()).toContainText("Work Mail")
+  // Searching happens in the browser. Other requests (such as the vault's
+  // regular check for changes from other devices) may still go out while the
+  // user types, so check that none of them carries what was searched for.
+  const observedRequests: string[] = []
+  const recordRequest = (request: Request) => {
+    observedRequests.push(
+      `${request.url()}\n${request.postData() ?? ""}`.toLowerCase()
+    )
   }
-  expect(searchRequests).toEqual([])
+  const searchTerms: string[] = []
+  const searchFor = async (term: string) => {
+    searchTerms.push(term)
+    await search.fill(term)
+  }
+  page.on("request", recordRequest)
 
-  await search.fill("no-such-credential")
+  await searchFor("WORK MAIL")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("Work Mail")
+
+  await searchFor("EXAMPLE.EDU")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("Work Mail")
+
+  await searchFor("ALICE@CAMPUS")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText("Work Mail")
+
+  await searchFor("no-such-credential")
   await expect(
     page.getByRole("status").filter({ hasText: "No credentials match" })
   ).toBeVisible()
   await expect(rows).toHaveCount(0)
 
   await search.press("Tab")
-  const clearButton = page.getByRole("button", { name: "Clear search" })
-  await expect(clearButton).toBeFocused()
+  const clearSearch = page.getByRole("button", { name: "Clear search" })
+  await expect(clearSearch).toBeFocused()
   await page.keyboard.press("Enter")
   await expect(search).toHaveValue("")
   await expect(rows).toHaveCount(2)
 
-  await search.fill("PERSONAL")
+  await searchFor("PERSONAL")
   await expect(rows).toHaveCount(1)
   await search.press("Escape")
   await expect(search).toHaveValue("")
   await expect(rows).toHaveCount(2)
-  expect(searchRequests).toEqual([])
-  page.off("request", observeRequest)
+  page.off("request", recordRequest)
+
+  for (const term of searchTerms) {
+    const encoded = encodeURIComponent(term)
+    for (const form of new Set([term, encoded, encoded.replace(/%20/g, "+")])) {
+      const needle = form.toLowerCase()
+      expect(
+        observedRequests.filter((request) => request.includes(needle)),
+        `requests containing "${form}"`
+      ).toEqual([])
+    }
+  }
 })
 
 test("previews generated passwords live on the generator page", async ({
@@ -325,9 +341,7 @@ test("previews generated passwords live on the generator page", async ({
 }) => {
   await page.goto("/")
 
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByRole("button", { name: "Close" }).click()
   await expect(

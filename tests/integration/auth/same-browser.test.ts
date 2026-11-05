@@ -17,6 +17,7 @@ import {
   User,
 } from "../../../lib/auth/server"
 import { approvePendingDevice, removeDevice } from "../../../lib/devices/server"
+import { accountBody } from "./account-body"
 
 const origin = "http://127.0.0.1:3100"
 const prefix = `same-browser-${randomUUID()}`
@@ -74,7 +75,9 @@ class Browser {
   async register(email: string) {
     this.counted(email)
     const response = this.store(
-      await register(this.request("/api/auth", "POST", { email, password }))
+      await register(
+        this.request("/api/auth", "POST", accountBody(email, password))
+      )
     )
     assert.equal(response.status, 201)
   }
@@ -84,7 +87,9 @@ class Browser {
   }
   login(email: string) {
     this.counted(email)
-    return login(this.request("/api/auth", "POST", { email, password }))
+    return login(
+      this.request("/api/auth", "POST", accountBody(email, password))
+    )
   }
   async signOut() {
     assert.equal((await logout(this.request("/api/auth/logout"))).status, 200)

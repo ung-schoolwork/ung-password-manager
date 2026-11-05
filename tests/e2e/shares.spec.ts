@@ -2,7 +2,7 @@ import type { Browser, Page } from "@playwright/test"
 import {
   accountPassword,
   approvalCode,
-  createVault,
+  openNewVault,
   registerAccount,
   unlockVault,
 } from "./account-helpers"
@@ -13,7 +13,7 @@ const origin = "http://127.0.0.1:3100"
 async function accountWithVault(page: Page) {
   const account = await registerAccount(page)
   await page.goto("/vault")
-  await createVault(page)
+  await openNewVault(page)
   await page.keyboard.press("Escape")
   return account
 }
@@ -44,7 +44,9 @@ async function shareWith(page: Page, label: string, recipientEmail: string) {
   await expect(dialog).toContainText(`Share ${label}`)
   await dialog.getByLabel("Recipient's email").fill(recipientEmail)
   await dialog.getByRole("button", { name: "Share", exact: true }).click()
-  await expect(dialog.getByRole("heading", { name: "Credential shared" })).toBeVisible()
+  await expect(
+    dialog.getByRole("heading", { name: "Credential shared" })
+  ).toBeVisible()
   await dialog.getByRole("button", { name: "Done" }).click()
   await expect(dialog).toHaveCount(0)
 }
@@ -158,9 +160,7 @@ test("a signed-in device that has not been approved cannot list, create, or resp
   await unapproved
     .getByLabel("Email", { exact: true })
     .fill(recipient.account.email)
-  await unapproved
-    .getByLabel("Account password", { exact: true })
-    .fill(accountPassword)
+  await unapproved.getByLabel("Password", { exact: true }).fill(accountPassword)
   await unapproved.getByRole("button", { name: "Sign in", exact: true }).click()
   await approvalCode(unapproved)
 
@@ -291,4 +291,3 @@ test("retrying Accept after a failed share removal does not add the credential t
 
   await recipient.context.close()
 })
-

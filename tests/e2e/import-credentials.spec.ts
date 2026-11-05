@@ -1,7 +1,5 @@
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
-
-const vaultPassword = "correct horse battery staple"
+import { registerAccount, unlockVault } from "./account-helpers"
 
 const csvFile = {
   name: "credentials.csv",
@@ -21,9 +19,7 @@ test("reopening the import dialog after closing it mid-import shows a fresh file
   page,
 }) => {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   // An empty vault opens the Add Credential dialog automatically; dismiss it.
   await expect(
@@ -56,9 +52,7 @@ test("reopening the import dialog after closing it mid-import shows a fresh file
   await expect(page.getByText("2 of 2 rows are ready to import.")).toBeVisible()
 
   await page.getByRole("button", { name: "Import 2 credentials" }).click()
-  await expect(
-    page.getByRole("dialog", { name: "Importing…" })
-  ).toBeVisible()
+  await expect(page.getByRole("dialog", { name: "Importing…" })).toBeVisible()
 
   // Close while the (gated, still-pending) import is running.
   await page.keyboard.press("Escape")

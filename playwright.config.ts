@@ -19,8 +19,9 @@ export default defineConfig({
     env: {
       APP_ORIGIN: "http://127.0.0.1:3100",
       AUTH_TRUSTED_IP_HEADER: "x-e2e-client-ip",
-      EXTENSION_ORIGINS: EXTENSION_ORIGIN,
+      // Test-only key so the sharing tests run without setup; never use it for real data.
       SHARE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      EXTENSION_ORIGINS: EXTENSION_ORIGIN,
       NEXT_PUBLIC_CLIPBOARD_CLEAR_MS: String(CLIPBOARD_CLEAR_MS),
     },
     url: "http://127.0.0.1:3100",

@@ -3,8 +3,11 @@
   --background: #ffffff;
   --foreground: #18181b;
   --muted: #52525b;
+  --border: #d4d4d8;
+  --surface: #f4f4f5;
   --accent: #18181b;
   --accent-foreground: #fafafa;
+  --danger: #b91c1c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -12,14 +15,17 @@
     --background: #18181b;
     --foreground: #fafafa;
     --muted: #a1a1aa;
+    --border: #3f3f46;
+    --surface: #27272a;
     --accent: #fafafa;
     --accent-foreground: #18181b;
+    --danger: #f87171;
   }
 }
 
 body {
   margin: 0;
-  width: 18rem;
+  width: 20rem;
   background: var(--background);
   color: var(--foreground);
   font:
@@ -33,9 +39,32 @@ main {
   padding: 1rem;
 }
 
+section,
+form,
+.stack {
+  display: grid;
+  gap: 0.5rem;
+}
+
+section[hidden],
+[hidden] {
+  display: none;
+}
+
 h1 {
   margin: 0;
   font-size: 1rem;
+}
+
+h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+h3 {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 
 p {
@@ -44,9 +73,27 @@ p {
   overflow-wrap: anywhere;
 }
 
+label {
+  font-weight: 500;
+}
+
+input {
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+}
+
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 button {
   justify-self: start;
-  border: 0;
+  border: 1px solid var(--accent);
   border-radius: 0.375rem;
   padding: 0.5rem 0.75rem;
   background: var(--accent);
@@ -55,11 +102,83 @@ button {
   cursor: pointer;
 }
 
+button.secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+button.link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-button[hidden] {
+.error {
+  color: var(--danger);
+}
+
+.code {
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  color: var(--foreground);
+  font:
+    600 1.5rem/1.2 ui-monospace,
+    monospace;
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.entries {
+  display: grid;
+  max-height: 14rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.entries:empty {
   display: none;
+}
+
+.entries li {
+  display: grid;
+  padding: 0.5rem 0.75rem;
+}
+
+.entries li + li {
+  border-top: 1px solid var(--border);
+}
+
+.entries .name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.entries .username {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }

@@ -10,7 +10,7 @@ A team software-engineering project for a secure, accessible password-manager we
 - shadcn/ui with Base UI primitives
 - Bun for dependency management and scripts
 
-Email/password registration and sign-in use MongoDB Atlas through Mongoose. Each account has a separate client-encrypted vault saved through its account and a configurable cryptographically secure password generator. Encryption and decryption run in the browser; the server receives only the encrypted envelope. Account sign-in never unlocks the vault. Vault changes sync between the account's approved devices.
+Email/password registration and sign-in use MongoDB Atlas through Mongoose. Each account has a separate client-encrypted vault saved through its account and a configurable cryptographically secure password generator. Encryption and decryption run in the browser; the server receives only the encrypted envelope. One password signs in and opens the vault, and it never leaves the browser. Vault changes sync between the account's approved devices.
 
 ## Where the code lives
 
@@ -34,25 +34,41 @@ Vault encryption and credential operations run in the browser. `lib/vault/servic
 that ties the pieces together: it validates a credential, encrypts the whole
 vault, and hands it to `remote.client.ts` to save through the account. Start there.
 
+## One password: sign-in and vault keys
+
+`lib/vault/crypto.client.ts` derives every key from the account email and password. It uses only the Web Crypto API, so other clients can import it unchanged.
+
+```
+email + password --PBKDF2-SHA256, 600,000 rounds--> account secret
+account secret --HKDF "auth-key"-------------> auth key      sent to the server to sign in
+account secret --HKDF "vault-wrapping-key"---> wrapping key  stays in the browser
+wrapping key --AES-GCM--> wraps a random vault key
+vault key    --AES-GCM--> encrypts the vault
+```
+
+The PBKDF2 salt is `ung-password-manager:account:v1:` followed by the email, trimmed and lowercased (`lib/auth/shared.ts`). The two HKDF outputs are independent, so the auth key the server sees cannot recover the wrapping key. Registration creates the random vault key in the browser and sends `{ email, authKey, wrappedVaultKey }`; sign-in sends `{ email, authKey }`. The server stores a salted scrypt hash of the auth key and the wrapped vault key, and neither can decrypt the vault. Changing the password only needs the vault key re-wrapped (`rewrapVaultKey`) and the auth key hash replaced, not the vault re-encrypted.
+
+After sign-in the browser keeps the wrapping key in memory until this device is approved and the vault opens, then drops it. Locking the vault or reloading the page asks for the same password again.
+
 ## Account vault storage
 
-`/api/vault` persists one encrypted vault per authenticated account. `GET` returns `{ envelope, revision }`, with both values null when the account has no saved vault. `PUT` accepts `{ envelope, expectedRevision }`: null creates a vault only if none exists; a matching revision updates it atomically. A stale revision or concurrent create returns 409 without overwriting the current vault. Ownership comes only from the authenticated session, never from a request-supplied account ID.
+`/api/vault` persists one encrypted vault per authenticated account. `GET` returns `{ wrappedVaultKey, envelope, revision }`, with `envelope` and `revision` null until the account first saves its vault. `PUT` accepts `{ envelope, expectedRevision }`: null creates a vault only if none exists; a matching revision updates it atomically. A stale revision or concurrent create returns 409 without overwriting the current vault. Ownership comes only from the authenticated session, never from a request-supplied account ID.
 
-Writes require the exact configured origin and a validated version-1 encrypted envelope. Request bodies are capped at 1 MiB, including chunked bodies. Only ciphertext and encryption metadata are stored; these routes do not decrypt vaults. The database needs permission to create the unique account-vault index. Authentication failures return 401, invalid payloads 400, and unavailable storage 503; responses are not cached.
+Writes require the exact configured origin and a validated version-2 encrypted envelope. Request bodies are capped at 1 MiB, including chunked bodies. Only ciphertext and encryption metadata are stored; these routes do not decrypt vaults. The database needs permission to create the unique account-vault index. Authentication failures return 401, invalid payloads 400, and unavailable storage 503; responses are not cached.
 
-The browser repository remembers the revision loaded with the encrypted envelope and sends it with each save. Decrypted state is committed only after a successful save. Failed saves retain the credential draft and display an error; conflicts require reopening the latest vault before retrying. A fresh browser can sign in and retrieve the same encrypted vault once it is an approved device, but still needs its separate vault password.
+The browser repository remembers the revision loaded with the encrypted envelope and sends it with each save. Decrypted state is committed only after a successful save. Failed saves retain the credential draft and display an error; conflicts require reopening the latest vault before retrying. A fresh browser can sign in and open the same vault as soon as it is an approved device.
 
 ## Approved devices and sync
 
 Each browser is identified by a long-lived, HttpOnly device cookie and registered against the signed-in account. The first device on an account is approved automatically. Every later device shows an eight-digit approval code, valid for ten minutes, and cannot read, write, or poll the vault until an approved device enters that code on the Settings page. Approval attempts are rate-limited per account.
 
-`/api/vault` and `/api/vault/revision` return 403 to unapproved devices. An open vault polls the revision every 15 seconds and when the tab regains focus. When another device has saved a newer revision, the browser fetches it and decrypts it with the vault password held by the unlocked session, and a save built on the replaced data is rejected as a conflict instead of overwriting it.
+`/api/vault` and `/api/vault/revision` return 403 to unapproved devices. An open vault polls the revision every 15 seconds and when the tab regains focus. When another device has saved a newer revision, the browser fetches it and decrypts it with the vault key held by the unlocked session, and a save built on the replaced data is rejected as a conflict instead of overwriting it.
 
 `/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms on the Settings page. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
 
 ## Chrome extension
 
-`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. For now the popup only shows whether this browser is signed in to the app. It is bundled with `Bun.build`; there is no separate package or framework.
+`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. The popup signs in, shows the device approval code, and opens the vault: it lists the logins saved for the website in the current tab and searches all of them. It is bundled with `Bun.build`; there is no separate package or framework.
 
 ```bash
 bun run build:extension                                         # app at http://localhost:3000
@@ -75,6 +91,20 @@ Entries that are not exactly `chrome-extension://` followed by a 32-letter ID ar
 
 **Requests go through the service worker.** The popup asks the service worker over `chrome.runtime` messaging, and the service worker calls the API. Content scripts must do the same: a request made from a content script carries the visited site's origin and is rejected.
 
+**Signing in and opening the vault.** The extension is not a separate device: it uses the Chrome profile's sign-in and device approval (`extension/src/popup-controller.ts`).
+
+- Signed out: the popup asks for the email and password, derives the keys, and sends `{ email, authKey }` to `/api/auth/login`. The session cookie is the browser's, so the app is signed in too.
+- Signed in: the popup takes the email from `/api/auth/session` and asks only for the password, which opens the vault locally; there is no second sign-in.
+- Not approved: `POST /api/devices` (the same call the app makes) returns the approval code, which the popup shows and re-checks every 3 seconds. `/api/vault` returns 403 until an approved device enters the code in Settings. A password entered at sign-in is kept as the wrapping key until then, so the vault opens without asking again.
+- Open vault: every 5 seconds the popup re-checks the session and `/api/vault/revision`. A 401 or a different account shows sign-in or unlock again, a 403 (this browser was removed in Settings) shows a new approval code, and a new revision is downloaded and decrypted.
+- Sign-out in the popup calls `/api/auth/logout`, which signs out the app as well; the app notices on focus or within 30 seconds. Sign-out in the app is noticed by the open popup within 5 seconds, or when it next opens.
+
+The wrapping key, the vault key, and the decrypted list live only in the popup's memory. The service worker relays requests and only handles the auth key and ciphertext; it keeps nothing between messages. Nothing is written to `chrome.storage`, and the manifest requests only `activeTab` besides host access to the app. Closing the popup, locking, signing out, a 401, or a 403 drops the keys and the list, and opening the popup again asks for the password. The popup keeps only the account name, website, and username of each login; passwords are decrypted with the rest of the vault but not kept.
+
+**Logins for the current website.** Clicking the toolbar button grants `activeTab`, so the popup can read the current tab's address once when it opens; it is not stored. `lib/vault/site-match.ts` compares hosts: a credential's website is free text, read with or without a scheme or path, ignoring `www.` and any port. A tab matches when its host equals the saved host or is a subdomain of it, so a login for `example.com` shows on `accounts.example.com`, but a login for `accounts.example.com` does not show on `example.com`, and `evil-example.com` never matches `example.com`. A saved single label (`com`, `localhost`) or IP address matches only itself. There is no public-suffix list, so a login saved for `co.uk` would match every `co.uk` site. Pages that are not `http` or `https` (`chrome://`, `file:`) get no suggestions. The search box uses `lib/vault/search.ts`, as the app does, over account name, website, and username.
+
+The e2e test opens the real toolbar popup with `chrome.action.openPopup()` and reaches it over the DevTools protocol. That does not grant `activeTab`, so the test's "current website" is the app's own origin, which the extension's host permission lets it read; subdomain rules are covered by unit tests.
+
 **Shared vault encryption.** `extension/src/vault.ts` re-exports `lib/vault/crypto.client.ts`; the bundler compiles the same module into the extension, so encryption is never copied. A unit test bundles it for the browser and round-trips a vault through it.
 
 ## Development
@@ -83,7 +113,7 @@ Copy `.env.example` to `.env.local`. Set `MONGODB_URI` to your MongoDB Atlas dat
 
 Production also requires `AUTH_TRUSTED_IP_HEADER` naming a header that your trusted reverse proxy **overwrites** with a single validated client IP. Do not enable it behind a proxy that forwards arbitrary client-supplied values. Missing or invalid source identity fails closed. Development without this setting uses a shared loopback source. Login and registration share database-backed global, source, and source/account rate limits; no account-wide lockout is shared between sources. Hashing is limited to two concurrent jobs per process. Add perimeter request limits when deploying; application throttling is not DDoS protection.
 
-Mongoose creates unique account/session indexes and expiration indexes for sessions and rate-limit counters before serving authentication requests. The database account needs permission to create these indexes. Accounts store versioned salted scrypt hashes (`N=32768, r=8, p=3`); session records store only token digests. Sessions expire after eight hours. Production cookies are Secure, HttpOnly, SameSite Strict, and use the `__Host-` prefix. Sign-out revokes the current session and removes decrypted vault state. Other open tabs are notified; server revocation is also checked on focus and every 30 seconds.
+Mongoose creates unique account/session indexes and expiration indexes for sessions and rate-limit counters before serving authentication requests. The database account needs permission to create these indexes. Accounts store versioned salted scrypt hashes (`N=32768, r=8, p=3`) of the browser-derived auth key; session records store only token digests. Sessions expire after eight hours. Production cookies are Secure, HttpOnly, SameSite Strict, and use the `__Host-` prefix. Sign-out revokes the current session and removes decrypted vault state. Other open tabs are notified; server revocation is also checked on focus and every 30 seconds.
 
 Sign-out does not send a cookie-clearing header: a delayed logout response must not erase a newer login from another tab. The revoked token may remain in the HttpOnly cookie until it expires or is overwritten by the next login, but the server no longer accepts it.
 
@@ -91,7 +121,7 @@ Account mutations are serialized across tabs with Web Locks where supported. A d
 
 Registration signs the new account in. Duplicate registration returns a generic error, but its status differs from success, so registration can reveal whether an email is already registered. Email verification and a privacy-preserving registration flow are outside this ticket.
 
-Existing pre-account and account-specific local vaults are never adopted automatically. When no remote vault exists, users can explicitly choose an existing vault and enter its password. The browser validates and decrypts it before copying only its encrypted envelope through the account. A concurrent remote create prevents migration; existing remote vaults are never silently overwritten. Original local copies remain untouched on success or failure. Local keys do not isolate same-origin storage from malicious scripts.
+Vaults saved in browser storage by earlier versions of the app are ignored and left untouched.
 
 ```bash
 bun install

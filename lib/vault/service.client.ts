@@ -1,36 +1,25 @@
-import { decryptVault, encryptVault } from "@/lib/vault/crypto.client"
-import type { VaultRepository } from "@/lib/vault/repository.client"
+import {
+  decryptVault,
+  encryptVault,
+  unwrapVaultKey,
+} from "@/lib/vault/crypto.client"
+import type {
+  StoredVault,
+  VaultRepository,
+} from "@/lib/vault/repository.client"
 import { VaultConflictError } from "@/lib/vault/remote"
 import {
   VAULT_DATA_VERSION,
   type Credential,
   type CredentialDraft,
   type VaultDataV1,
-  type VaultEnvelopeV1,
 } from "@/lib/vault/types"
-import {
-  validateCredentialDraft,
-  validateMasterPassphrase,
-} from "@/lib/vault/validation"
+import { validateCredentialDraft } from "@/lib/vault/validation"
 
 export class VaultLockedError extends Error {
   constructor() {
     super("Unlock the vault before changing credentials.")
     this.name = "VaultLockedError"
-  }
-}
-
-export class VaultAlreadyExistsError extends Error {
-  constructor() {
-    super("A vault already exists. Refresh the page to open it.")
-    this.name = "VaultAlreadyExistsError"
-  }
-}
-
-export class VaultNotFoundError extends Error {
-  constructor() {
-    super("No saved vault was found.")
-    this.name = "VaultNotFoundError"
   }
 }
 
@@ -73,7 +62,7 @@ const defaultDependencies: VaultServiceDependencies = {
 
 export class VaultService {
   private data: VaultDataV1 | null = null
-  private passphrase: string | null = null
+  private vaultKey: CryptoKey | null = null
   private generation = 0
   private queue: Promise<unknown> = Promise.resolve()
 
@@ -82,56 +71,23 @@ export class VaultService {
     private readonly dependencies: VaultServiceDependencies = defaultDependencies
   ) {}
 
-  async hasVault(): Promise<boolean> {
-    return (await this.repository.load()) !== null
-  }
-
   isUnlocked(): boolean {
-    return this.data !== null && this.passphrase !== null
+    return this.data !== null && this.vaultKey !== null
   }
 
-  async createVault(passphrase: string): Promise<void> {
+  /**
+   * Opens the vault with the wrapping key derived from the account password.
+   * An account with nothing saved yet opens as an empty vault.
+   */
+  async unlockVault(wrappingKey: CryptoKey): Promise<void> {
     const generation = ++this.generation
-    validateMasterPassphrase(passphrase)
-
-    if (await this.hasVault()) throw new VaultAlreadyExistsError()
-
-    const data: VaultDataV1 = {
-      version: VAULT_DATA_VERSION,
-      credentials: [],
-    }
-    const envelope = await encryptVault(passphrase, data)
+    const stored = await this.repository.load()
     this.assertCurrent(generation)
-    await this.repository.save(envelope)
-    this.assertCurrent(generation)
-
-    this.data = data
-    this.passphrase = passphrase
-  }
-
-  async migrateVault(
-    passphrase: string,
-    envelope: VaultEnvelopeV1
-  ): Promise<void> {
-    const generation = ++this.generation
-    if (await this.hasVault()) throw new VaultAlreadyExistsError()
-    this.assertCurrent(generation)
-    const data = await decryptVault(passphrase, envelope)
-    this.assertCurrent(generation)
-    await this.repository.save(envelope)
+    const vaultKey = await unwrapVaultKey(wrappingKey, stored.wrappedVaultKey)
+    const data = await readVault(vaultKey, stored)
     this.assertCurrent(generation)
     this.data = data
-    this.passphrase = passphrase
-  }
-  async unlockVault(passphrase: string): Promise<void> {
-    const generation = ++this.generation
-    const envelope = await this.repository.load()
-    if (!envelope) throw new VaultNotFoundError()
-
-    const data = await decryptVault(passphrase, envelope)
-    this.assertCurrent(generation)
-    this.data = data
-    this.passphrase = passphrase
+    this.vaultKey = vaultKey
   }
 
   /** Revision of the vault this service last loaded or saved, if versioned. */
@@ -145,13 +101,12 @@ export class VaultService {
    */
   async refresh(): Promise<boolean> {
     const generation = this.generation
-    const { passphrase } = this.requireUnlocked()
+    const { vaultKey } = this.requireUnlocked()
     return this.exclusive(async () => {
       this.assertCurrent(generation)
-      const envelope = await this.repository.load()
+      const stored = await this.repository.load()
       this.assertCurrent(generation)
-      if (!envelope) throw new VaultNotFoundError()
-      const data = await decryptVault(passphrase, envelope)
+      const data = await readVault(vaultKey, stored)
       this.assertCurrent(generation)
       this.data = data
       return true
@@ -161,7 +116,7 @@ export class VaultService {
   lockVault(): void {
     this.generation += 1
     this.data = null
-    this.passphrase = null
+    this.vaultKey = null
   }
 
   listCredentials(): Credential[] {
@@ -169,16 +124,12 @@ export class VaultService {
     return data.credentials.map((credential) => ({ ...credential }))
   }
 
-  async saveCredential(
-    draft: CredentialDraft,
-    sourceShareId?: string
-  ): Promise<Credential> {
+  async saveCredential(draft: CredentialDraft): Promise<Credential> {
     const normalized = validateCredentialDraft(draft)
     const timestamp = this.dependencies.now().toISOString()
     const credential: Credential = {
       ...normalized,
       id: this.dependencies.createId(),
-      ...(sourceShareId === undefined ? {} : { sourceShareId }),
       createdAt: timestamp,
       updatedAt: timestamp,
       passwordUpdatedAt: timestamp,
@@ -186,12 +137,6 @@ export class VaultService {
 
     for (let attempt = 1; ; attempt++) {
       const { data } = this.requireUnlocked()
-      if (sourceShareId) {
-        const existing = data.credentials.find(
-          (item) => item.sourceShareId === sourceShareId
-        )
-        if (existing) return { ...existing }
-      }
       try {
         await this.persist({
           ...data,
@@ -288,9 +233,9 @@ export class VaultService {
   private assertCurrent(generation: number): void {
     if (generation !== this.generation) throw new VaultLockedError()
   }
-  private requireUnlocked(): { data: VaultDataV1; passphrase: string } {
-    if (!this.data || !this.passphrase) throw new VaultLockedError()
-    return { data: this.data, passphrase: this.passphrase }
+  private requireUnlocked(): { data: VaultDataV1; vaultKey: CryptoKey } {
+    if (!this.data || !this.vaultKey) throw new VaultLockedError()
+    return { data: this.data, vaultKey: this.vaultKey }
   }
 
   private exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -302,9 +247,9 @@ export class VaultService {
   private async persist(data: VaultDataV1): Promise<void> {
     const generation = this.generation
     const baseline = this.data
-    const { passphrase } = this.requireUnlocked()
+    const { vaultKey } = this.requireUnlocked()
     await this.exclusive(async () => {
-      const envelope = await encryptVault(passphrase, data)
+      const envelope = await encryptVault(vaultKey, data)
       this.assertCurrent(generation)
       if (this.data !== baseline) throw new VaultConflictError()
       await this.repository.save(envelope)
@@ -312,4 +257,13 @@ export class VaultService {
       this.data = data
     })
   }
+}
+
+function readVault(
+  vaultKey: CryptoKey,
+  stored: StoredVault
+): Promise<VaultDataV1> {
+  if (!stored.envelope)
+    return Promise.resolve({ version: VAULT_DATA_VERSION, credentials: [] })
+  return decryptVault(vaultKey, stored.envelope)
 }

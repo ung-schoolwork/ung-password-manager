@@ -3,13 +3,16 @@ import { AccountRequestError } from "../../../lib/auth/client"
 import {
   accountFailureMessage,
   validateAccountFields,
+  vaultUnlockFailureMessage,
 } from "../../../lib/auth/feedback"
+import { ACCOUNT_CREATED_SIGN_IN_FAILED } from "../../../lib/auth/shared"
+import { VaultUnlockError } from "../../../lib/vault/crypto.client"
 
 describe("account form feedback", () => {
   it("validates required and malformed credentials before submission", () => {
     expect(validateAccountFields("login", "", "", "")).toEqual({
       email: "Enter your email address.",
-      password: "Enter your account password.",
+      password: "Enter your password.",
     })
     expect(validateAccountFields("login", "not-an-email", "short", "")).toEqual(
       {
@@ -43,7 +46,7 @@ describe("account form feedback", () => {
         "valid-password-123",
         ""
       )
-    ).toEqual({ confirmation: "Confirm your account password." })
+    ).toEqual({ confirmation: "Confirm your password." })
     expect(
       validateAccountFields(
         "register",
@@ -51,7 +54,7 @@ describe("account form feedback", () => {
         "valid-password-123",
         "different-password-123"
       )
-    ).toEqual({ confirmation: "The account passwords do not match." })
+    ).toEqual({ confirmation: "The passwords do not match." })
   })
 
   it("uses the same private sign-in message for credential failures", () => {
@@ -145,6 +148,57 @@ describe("account form feedback", () => {
     )
     expect(accountFailureMessage(new Error("Forbidden"), "register")).toBe(
       "Could not create your account. Try again."
+    )
+  })
+
+  it("rounds long waits up to whole minutes", () => {
+    expect(
+      accountFailureMessage(
+        new AccountRequestError("Too many attempts", 429, "900"),
+        "login"
+      )
+    ).toBe("Too many attempts. Wait 15 minutes before trying again.")
+    expect(
+      accountFailureMessage(
+        new AccountRequestError("Too many attempts", 429, "61"),
+        "register"
+      )
+    ).toBe("Too many attempts. Wait 2 minutes before trying again.")
+  })
+
+  it("tells the user to sign in when registration created the account", () => {
+    expect(
+      accountFailureMessage(
+        new AccountRequestError(ACCOUNT_CREATED_SIGN_IN_FAILED, 503),
+        "register"
+      )
+    ).toBe(
+      "Your account was created, but you couldn’t be signed in. Sign in to continue."
+    )
+    expect(
+      accountFailureMessage(
+        new AccountRequestError(ACCOUNT_CREATED_SIGN_IN_FAILED, 503),
+        "login"
+      )
+    ).toBe("The server is unavailable right now. Try again in a few moments.")
+  })
+})
+
+describe("vault unlock feedback", () => {
+  it("explains a wrong password without mentioning how the vault is stored", () => {
+    expect(vaultUnlockFailureMessage(new VaultUnlockError())).toBe(
+      "That password didn’t open your vault. Enter the password you use to sign in."
+    )
+  })
+
+  it("keeps the app's own messages for other failures", () => {
+    expect(
+      vaultUnlockFailureMessage(
+        new Error("Your account session has ended. Sign in again.")
+      )
+    ).toBe("Your account session has ended. Sign in again.")
+    expect(vaultUnlockFailureMessage("unexpected")).toBe(
+      "Your vault could not be opened. Try again."
     )
   })
 })

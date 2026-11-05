@@ -1,10 +1,10 @@
 "use client"
 
 import { Check, Copy } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { copyWithAutoClear } from "@/lib/vault/clipboard"
+import { copyWithAutoClear, onClipboardCleared } from "@/lib/vault/clipboard"
 
 type CopyField = "username" | "password"
 
@@ -23,15 +23,29 @@ export function CredentialCopyActions({
   const [copiedField, setCopiedField] = useState<CopyField | null>(null)
   const [clearedField, setClearedField] = useState<CopyField | null>(null)
   const [copyFailed, setCopyFailed] = useState(false)
+  // The last copy made from these buttons, so the "cleared" message only
+  // shows for a copy of ours.
+  const lastCopyRef = useRef<{ id: number; field: CopyField } | null>(null)
+
+  // Swap the "copied" message for the "cleared" one. The pending clear never
+  // holds a callback from here (it would keep this component's props, the
+  // password included, alive after unmount); we listen instead, and stop
+  // when the buttons unmount.
+  useEffect(
+    () =>
+      onClipboardCleared((copyId) => {
+        const lastCopy = lastCopyRef.current
+        if (lastCopy?.id !== copyId) return
+        lastCopyRef.current = null
+        setCopiedField(null)
+        setClearedField(lastCopy.field)
+      }),
+    []
+  )
 
   async function copy(value: string, field: CopyField) {
     try {
-      await copyWithAutoClear(value, () => {
-        // Swap the "copied" message for the "cleared" one. The buttons may
-        // have unmounted by now, in which case these updates do nothing.
-        setCopiedField(null)
-        setClearedField(field)
-      })
+      lastCopyRef.current = { id: await copyWithAutoClear(value), field }
     } catch {
       setCopiedField(null)
       setClearedField(null)

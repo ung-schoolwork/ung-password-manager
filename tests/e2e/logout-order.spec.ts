@@ -48,11 +48,16 @@ test("a late logout response does not erase a newer cross-tab login", async ({
     ).toBeVisible()
     await signingIn.getByLabel("Email", { exact: true }).fill(account.email)
     await signingIn
-      .getByLabel("Account password", { exact: true })
+      .getByLabel("Password", { exact: true })
       .fill(accountPassword)
     await signingIn
       .getByRole("button", { name: "Sign in", exact: true })
       .click()
+    // Signing in opens the new account's empty vault at its add dialog.
+    await expect(
+      signingIn.getByRole("dialog", { name: "Add a credential" })
+    ).toBeVisible()
+    await signingIn.keyboard.press("Escape")
     await expect(
       signingIn.getByRole("button", { name: "Sign out", exact: true })
     ).toBeVisible()

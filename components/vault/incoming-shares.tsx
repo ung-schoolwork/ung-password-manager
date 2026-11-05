@@ -23,18 +23,24 @@ export function IncomingShares() {
   const [shares, setShares] = useState<IncomingShare[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const refreshVersionRef = useRef(0)
+  // Bumped by every refresh and every Accept/Decline, so a list that was
+  // requested earlier can't bring back a share the user has just handled.
+  const refreshVersion = useRef(0)
+  // Shares whose credential has already been saved to the vault. Accepting
+  // saves the credential and then removes the share; if the removal fails,
+  // the share stays listed and a retry must not save a second copy.
+  const savedShareIdsRef = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
-    const version = ++refreshVersionRef.current
+    const version = ++refreshVersion.current
     try {
       const latestShares = await listIncomingShares()
-      if (version === refreshVersionRef.current) {
+      if (version === refreshVersion.current) {
         setShares(latestShares)
         setError(null)
       }
     } catch {
-      if (version === refreshVersionRef.current) {
+      if (version === refreshVersion.current) {
         setError("Could not check for shared credentials.")
       }
     }
@@ -46,11 +52,15 @@ export function IncomingShares() {
   }, [refresh])
 
   async function handleAccept(share: IncomingShare) {
-    refreshVersionRef.current++
+    refreshVersion.current++
     setBusyId(share.id)
     try {
-      await addCredential(share.credential, share.id)
+      if (!savedShareIdsRef.current.has(share.id)) {
+        await addCredential(share.credential)
+        savedShareIdsRef.current.add(share.id)
+      }
       await respondToShare(share.id)
+      savedShareIdsRef.current.delete(share.id)
       setShares((current) => current.filter((item) => item.id !== share.id))
       setError(null)
     } catch {
@@ -61,7 +71,7 @@ export function IncomingShares() {
   }
 
   async function handleDecline(share: IncomingShare) {
-    refreshVersionRef.current++
+    refreshVersion.current++
     setBusyId(share.id)
     try {
       await respondToShare(share.id)

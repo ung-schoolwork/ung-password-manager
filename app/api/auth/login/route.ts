@@ -1,7 +1,7 @@
 import { ensureDevice, setDeviceCookie } from "@/lib/devices/server"
 import {
   connectAuth,
-  credentials,
+  accountInput,
   failure,
   HashBusyError,
   issueSession,
@@ -10,14 +10,14 @@ import {
   originAllowed,
   throttled,
   User,
-  validPassword,
+  validAuthKey,
 } from "@/lib/auth/server"
 
 export const runtime = "nodejs"
 export async function POST(request: Request) {
   if (!originAllowed(request)) return json({ error: "Forbidden" }, 403)
   try {
-    const input = await credentials(request)
+    const input = await accountInput(request)
     if (!input) return json({ error: "Invalid credentials" }, 400)
     await connectAuth()
     const limit = await limited(request, input.email)
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     if (limit && "retryAfter" in limit) return throttled(limit.retryAfter)
     const user = await User.findOne({ email: input.email })
     if (
-      !(await validPassword(input.password, user?.passwordHash, user?.salt)) ||
+      !(await validAuthKey(input.authKey, user?.authKeyHash, user?.salt)) ||
       !user
     )
       return json({ error: "Invalid credentials" }, 401)

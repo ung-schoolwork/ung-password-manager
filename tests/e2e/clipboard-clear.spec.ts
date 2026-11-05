@@ -1,10 +1,9 @@
 import type { Page } from "@playwright/test"
 
 import { expect, test } from "./fixtures"
-import { registerAccount } from "./account-helpers"
+import { registerAccount, unlockVault } from "./account-helpers"
 import { CLIPBOARD_CLEAR_MS } from "./clipboard-clear-timing"
 
-const vaultPassword = "correct horse battery staple"
 const credentialPassword = "OriginalDemo!123456"
 
 // Shared with playwright.config.ts through clipboard-clear-timing.ts, so the
@@ -22,16 +21,17 @@ test.beforeEach(async ({ page }) => {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
 })
 
-async function createVaultWithCredential(page: Page) {
+async function createVaultWithCredential(
+  page: Page,
+  password = credentialPassword
+) {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   await page.getByLabel("Account label").fill("University email")
   await page.getByLabel("Website or app").fill("mail.example.edu")
   await page.getByLabel("Username").fill("student@example.edu")
-  await page.getByLabel("Password", { exact: true }).fill(credentialPassword)
+  await page.getByLabel("Password", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Save credential" }).click()
   await expect(
     page.getByText("University email", { exact: true })
@@ -42,7 +42,7 @@ function readClipboard(page: Page) {
   return page.evaluate(() => navigator.clipboard.readText())
 }
 
-async function copyPassword(page: Page) {
+async function copyPassword(page: Page, expected = credentialPassword) {
   const savedCredential = page
     .getByRole("list", { name: "Saved credentials" })
     .getByRole("listitem")
@@ -51,7 +51,7 @@ async function copyPassword(page: Page) {
   await expect(savedCredential.getByRole("status")).toHaveText(
     "Password copied."
   )
-  expect(await readClipboard(page)).toBe(credentialPassword)
+  expect(await readClipboard(page)).toBe(expected)
 }
 
 async function waitUntil(page: Page, timestamp: number) {
@@ -185,15 +185,12 @@ test("leaves the clipboard alone if it no longer holds the copied value", async 
   expect(await readClipboard(page)).toBe("something-else-entirely")
 })
 
-
-// The generator sits behind the vault, so create one and reach the page through
+// The generator sits behind the vault, so open it and reach the page through
 // the nav like a user would (the unlocked vault survives the client-side
 // navigation).
 async function openGenerator(page: Page) {
   await page.goto("/")
-  await page.getByLabel("Vault password", { exact: true }).fill(vaultPassword)
-  await page.getByLabel("Confirm vault password").fill(vaultPassword)
-  await page.getByRole("button", { name: "Create encrypted vault" }).click()
+  await unlockVault(page)
 
   // An empty vault opens the add dialog; close it to reach the navigation.
   await expect(
@@ -274,4 +271,200 @@ test("leaves a generator password alone if the clipboard no longer holds it", as
 
   await page.waitForTimeout(CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS)
   expect(await readClipboard(page)).toBe("something-else-entirely")
+})
+
+// Takes a V8 heap snapshot (Chromium only) and returns its JSON text.
+async function takeHeapSnapshot(page: Page) {
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    await cdp.send("HeapProfiler.enable")
+    await cdp.send("HeapProfiler.collectGarbage")
+    let snapshot = ""
+    cdp.on("HeapProfiler.addHeapSnapshotChunk", ({ chunk }) => {
+      snapshot += chunk
+    })
+    await cdp.send("HeapProfiler.takeHeapSnapshot", { reportProgress: false })
+    return snapshot
+  } finally {
+    await cdp.detach()
+  }
+}
+
+// Reports whether `text` appears anywhere in a heap snapshot.
+async function heapContains(page: Page, text: string) {
+  const snapshot = await takeHeapSnapshot(page)
+  // The snapshot is JSON, so look for the escaped form of the text.
+  return snapshot.includes(JSON.stringify(text).slice(1, -1))
+}
+
+interface HeapSnapshot {
+  snapshot: {
+    meta: {
+      node_fields: string[]
+      node_types: [string[], ...unknown[]]
+      edge_fields: string[]
+      edge_types: [string[], ...unknown[]]
+    }
+  }
+  nodes: number[]
+  edges: number[]
+  strings: string[]
+}
+
+// Reports whether the timers held by holdClearTimer can reach `text` on their
+// own. The decrypted vault (and React's bookkeeping in development) can keep a
+// password in the heap for a while after locking, so "is it anywhere in the
+// heap" cannot tell whether the pending clear is what keeps it. Instead, walk
+// what the timers reference, stopping at the page's global object and the
+// DOM, through which everything on the page is reachable.
+async function heldClearTimersReach(page: Page, text: string) {
+  const snapshot = JSON.parse(await takeHeapSnapshot(page)) as HeapSnapshot
+  const { meta } = snapshot.snapshot
+  const { nodes, edges, strings } = snapshot
+  const nodeFields = meta.node_fields.length
+  const edgeFields = meta.edge_fields.length
+  const nodeTypeField = meta.node_fields.indexOf("type")
+  const nodeNameField = meta.node_fields.indexOf("name")
+  const edgeCountField = meta.node_fields.indexOf("edge_count")
+  const edgeTypeField = meta.edge_fields.indexOf("type")
+  const edgeNameField = meta.edge_fields.indexOf("name_or_index")
+  const edgeToField = meta.edge_fields.indexOf("to_node")
+  const nodeCount = nodes.length / nodeFields
+
+  const firstEdge = new Uint32Array(nodeCount + 1)
+  for (let node = 0; node < nodeCount; node++) {
+    firstEdge[node + 1] =
+      firstEdge[node] + nodes[node * nodeFields + edgeCountField] * edgeFields
+  }
+  const typeOf = (node: number) =>
+    meta.node_types[0][nodes[node * nodeFields + nodeTypeField]]
+  const nameOf = (node: number) =>
+    strings[nodes[node * nodeFields + nodeNameField]]
+  function* strongEdges(node: number) {
+    for (
+      let edge = firstEdge[node];
+      edge < firstEdge[node + 1];
+      edge += edgeFields
+    ) {
+      const type = meta.edge_types[0][edges[edge + edgeTypeField]]
+      if (type === "weak") continue
+      yield {
+        type,
+        name: edges[edge + edgeNameField],
+        to: edges[edge + edgeToField] / nodeFields,
+      }
+    }
+  }
+
+  const timers: number[] = []
+  for (let node = 0; node < nodeCount; node++) {
+    for (const edge of strongEdges(node)) {
+      if (edge.type !== "property") continue
+      if (strings[edge.name] !== "__heldClearTimers") continue
+      for (const element of strongEdges(edge.to)) {
+        if (element.type === "element") timers.push(element.to)
+      }
+    }
+  }
+  expect(
+    timers.length,
+    "a held clear timer is in the snapshot"
+  ).toBeGreaterThan(0)
+
+  const seen = new Set(timers)
+  const queue = [...timers]
+  while (queue.length > 0) {
+    const node = queue.pop()!
+    const type = typeOf(node)
+    const name = nameOf(node)
+    if (type.includes("string") && name.includes(text)) return true
+    if (
+      type === "native" ||
+      type === "synthetic" ||
+      name.startsWith("system / NativeContext") ||
+      name.startsWith("Window")
+    ) {
+      continue
+    }
+    for (const edge of strongEdges(node)) {
+      if (seen.has(edge.to)) continue
+      seen.add(edge.to)
+      queue.push(edge.to)
+    }
+  }
+  return false
+}
+
+// Holds the auto-clear timer instead of letting it fire, so the pending clear
+// is still alive (like a real one for up to the clear delay) while the heap is
+// inspected. The handler is kept, as a real timer would keep it, in an array
+// heldClearTimersReach can find by name.
+async function holdClearTimer(page: Page) {
+  await page.addInitScript((clearMs: number) => {
+    const realSetTimeout = window.setTimeout.bind(window)
+    const held: unknown[] = []
+    Object.defineProperty(window, "__heldClearTimers", { value: held })
+    window.setTimeout = ((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === clearMs) {
+        held.push(handler)
+        return 0
+      }
+      return realSetTimeout(handler, timeout, ...args)
+    }) as unknown as typeof window.setTimeout
+  }, CLIPBOARD_CLEAR_MS)
+}
+
+test("the pending clear keeps no plaintext copy of the copied password in memory", async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await holdClearTimer(page)
+
+  await openGenerator(page)
+  const copied = await copyGeneratedPassword(page)
+
+  // Control: while the generator is on screen the snapshot does see the
+  // password, so a clean snapshot below means something.
+  expect(await heapContains(page, copied)).toBe(true)
+
+  // Leave the generator without reloading, so its own state is gone and only
+  // the pending clear could still reference the password.
+  await page.goBack()
+  // The empty vault reopens its add dialog, which hides the rest of the page
+  // from the accessibility tree, hence includeHidden.
+  await expect(
+    page.getByRole("button", { name: "Lock vault", includeHidden: true })
+  ).toBeVisible()
+
+  expect(await heapContains(page, copied)).toBe(false)
+})
+
+test("the pending clear of a saved password does not keep it in memory after locking", async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await holdClearTimer(page)
+
+  // A fresh password per run, so nothing left over from another test can
+  // account for a match.
+  const password = `Heap!${crypto.randomUUID()}`
+  await createVaultWithCredential(page, password)
+  await copyPassword(page, password)
+
+  // Control: while the copy buttons are on screen, the clear timer reaches
+  // their props, so the walk does find the password when it is there.
+  expect(await heldClearTimersReach(page, password)).toBe(true)
+
+  // Locking unmounts the copy buttons; the pending clear must not be what
+  // keeps the password alive from here on.
+  await page.getByRole("button", { name: "Lock vault" }).click()
+  await expect(
+    page.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+
+  expect(await heldClearTimersReach(page, password)).toBe(false)
 })
