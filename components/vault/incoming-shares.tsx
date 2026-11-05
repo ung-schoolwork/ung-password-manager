@@ -24,6 +24,10 @@ export function IncomingShares() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const refreshVersion = useRef(0)
+  // Shares whose credential has already been saved to the vault. Accepting
+  // saves the credential and then removes the share; if the removal fails,
+  // the share stays listed and a retry must not save a second copy.
+  const savedShareIdsRef = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async () => {
     const version = ++refreshVersion.current
@@ -49,9 +53,14 @@ export function IncomingShares() {
     refreshVersion.current++
     setBusyId(share.id)
     try {
-      await addCredential(share.credential)
+      if (!savedShareIdsRef.current.has(share.id)) {
+        await addCredential(share.credential)
+        savedShareIdsRef.current.add(share.id)
+      }
       await respondToShare(share.id)
+      savedShareIdsRef.current.delete(share.id)
       setShares((current) => current.filter((item) => item.id !== share.id))
+      setError(null)
     } catch {
       setError("Could not accept that credential. Try again.")
     } finally {
