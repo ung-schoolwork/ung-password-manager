@@ -25,6 +25,7 @@ components/settings/ account and device settings
 components/ui/       vendored shadcn/ui primitives - generated, not written by us
 lib/vault/           vault logic: validation, encryption, storage, service
 lib/password-generator.ts   password generation
+extension/           Chrome extension (Manifest V3): popup, service worker, build script
 tests/unit/          bun tests for lib/
 tests/e2e/           playwright tests that drive the real browser
 ```
@@ -48,6 +49,33 @@ Each browser is identified by a long-lived, HttpOnly device cookie and registere
 `/api/vault` and `/api/vault/revision` return 403 to unapproved devices. An open vault polls the revision every 15 seconds and when the tab regains focus. When another device has saved a newer revision, the browser fetches it and decrypts it with the vault password held by the unlocked session, and a save built on the replaced data is rejected as a conflict instead of overwriting it.
 
 `/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms on the Settings page. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
+
+## Chrome extension
+
+`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. For now the popup only shows whether this browser is signed in to the app. It is bundled with `Bun.build`; there is no separate package or framework.
+
+```bash
+bun run build:extension                                         # app at http://localhost:3000
+EXTENSION_APP_ORIGIN=https://app.example.com bun run build:extension   # deployed app
+```
+
+The build writes an unpacked extension to `extension/dist` (ignored by git). To load it, open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select `extension/dist`. After rebuilding, press the extension's reload button on that page. `EXTENSION_APP_ORIGIN` must be an exact origin and must use HTTPS unless it is a local server; the extension is granted host permission for that origin only.
+
+**Extension ID.** The build puts the public key from `extension/identity.ts` in the manifest `key`, so Chrome loads the unpacked extension as `chrome-extension://ibfocpogcdoolfmhcmnkiojgfpbkfbgj` on every machine. The build prints this origin. Only the public key is kept in the repository; it fixes the ID but cannot sign a package. Publishing to the Chrome Web Store assigns a different ID, which must then be added to `EXTENSION_ORIGINS`.
+
+**Server access.** State-changing routes still require an allowed `Origin`. Set `EXTENSION_ORIGINS` to a comma-separated list of exact `chrome-extension://<id>` origins to accept them alongside `APP_ORIGIN`:
+
+```bash
+EXTENSION_ORIGINS=chrome-extension://ibfocpogcdoolfmhcmnkiojgfpbkfbgj
+```
+
+Entries that are not exactly `chrome-extension://` followed by a 32-letter ID are ignored, so a typo never widens access. Every other origin, including other extensions, is still rejected, and production still fails closed without an HTTPS `APP_ORIGIN`. The server adds no CORS headers: Chrome lets an extension read responses from origins in its `host_permissions`, while web pages on other origins still cannot.
+
+**Authentication.** The extension uses the browser's existing session cookie rather than a separate token. Chrome treats requests from an extension page or service worker to an origin in its `host_permissions` as same-site, so the HttpOnly, `SameSite=Strict` session and device cookies are sent and set as they are for the app itself; the cookie settings did not change. No credential is stored in extension storage or readable by extension code. The trade-off is that the extension and the app in the same Chrome profile share one session and one device approval: signing out in either signs out both. The Playwright test `tests/e2e/extension.spec.ts` loads the built extension in Chromium and checks both the cookie and the origin rules.
+
+**Requests go through the service worker.** The popup asks the service worker over `chrome.runtime` messaging, and the service worker calls the API. Content scripts must do the same: a request made from a content script carries the visited site's origin and is rejected.
+
+**Shared vault encryption.** `extension/src/vault.ts` re-exports `lib/vault/crypto.client.ts`; the bundler compiles the same module into the extension, so encryption is never copied. A unit test bundles it for the browser and round-trips a vault through it.
 
 ## Development
 
@@ -79,6 +107,7 @@ bun run lint
 bun run typecheck
 bun run test
 bun run build
+bun run build:extension
 bun run test:e2e
 ```
 

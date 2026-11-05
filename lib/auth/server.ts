@@ -2,6 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto"
 import { isIP } from "node:net"
 import mongoose, { Schema } from "mongoose"
 import { NextResponse } from "next/server"
+import { isAllowedOrigin } from "@/lib/auth/origin"
 
 export const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000
 export const SESSION_COOKIE =
@@ -72,20 +73,7 @@ export function failure() {
   return json({ error: "Service unavailable" }, 503)
 }
 export function originAllowed(request: Request) {
-  const origin = process.env.APP_ORIGIN
-  // With no APP_ORIGIN, any origin may call the API outside production.
-  // Production still fails closed so a missing setting never opens it up.
-  if (!origin) return process.env.NODE_ENV !== "production"
-  try {
-    return (
-      new URL(origin).origin === origin &&
-      (process.env.NODE_ENV !== "production" ||
-        origin.startsWith("https://")) &&
-      request.headers.get("origin") === origin
-    )
-  } catch {
-    return false
-  }
+  return isAllowedOrigin(request.headers.get("origin"), process.env)
 }
 export function digest(token: string) {
   return createHash("sha256").update(token).digest("hex")

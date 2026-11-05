@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test"
 
+import { EXTENSION_ORIGIN } from "./extension/identity"
 import { CLIPBOARD_CLEAR_MS } from "./tests/e2e/clipboard-clear-timing"
 
 export default defineConfig({
@@ -20,6 +21,7 @@ export default defineConfig({
       AUTH_TRUSTED_IP_HEADER: "x-e2e-client-ip",
       // Test-only key so the sharing tests run without setup; never use it for real data.
       SHARE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      EXTENSION_ORIGINS: EXTENSION_ORIGIN,
       NEXT_PUBLIC_CLIPBOARD_CLEAR_MS: String(CLIPBOARD_CLEAR_MS),
     },
     url: "http://127.0.0.1:3100",
