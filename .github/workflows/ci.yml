@@ -62,6 +62,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Build Chrome extension
+        run: bun run build:extension
+
 
       - name: Install Playwright browser
         run: bunx playwright install --with-deps chromium
