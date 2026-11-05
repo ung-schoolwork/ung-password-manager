@@ -230,3 +230,65 @@ test("an unauthenticated request cannot list, create, or respond to shares", asy
 
   await context.close()
 })
+
+test("retrying Accept after a failed share removal does not add the credential twice", async ({
+  page,
+  browser,
+}) => {
+  await accountWithVault(page)
+  const recipient = await secondAccountWithVault(browser)
+
+  await addCredential(page, "Retry account")
+  await shareWith(page, "Retry account", recipient.account.email)
+
+  await recipient.page.goto("/vault")
+  await unlockVault(recipient.page)
+  await expect(
+    recipient.page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
+  await recipient.page.keyboard.press("Escape")
+  await expect(
+    recipient.page.getByRole("heading", { name: "Shared with you" })
+  ).toBeVisible({ timeout: 15_000 })
+
+  // Make the first removal attempt fail after the credential has already
+  // been saved, then let a retry succeed.
+  let deleteAttempts = 0
+  await recipient.page.route("**/api/shares/*", async (route) => {
+    if (route.request().method() !== "DELETE") {
+      await route.continue()
+      return
+    }
+    deleteAttempts += 1
+    if (deleteAttempts === 1) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "boom" }),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await recipient.page.getByRole("button", { name: "Accept" }).click()
+  await expect(
+    recipient.page.getByText("Could not accept that credential. Try again.")
+  ).toBeVisible()
+  await expect(
+    recipient.page.getByRole("heading", { name: "Shared with you" })
+  ).toBeVisible()
+
+  await recipient.page.getByRole("button", { name: "Accept" }).click()
+  await expect(
+    recipient.page.getByRole("heading", { name: "Shared with you" })
+  ).toHaveCount(0)
+  await expect(
+    recipient.page
+      .getByRole("list", { name: "Saved credentials" })
+      .getByText("Retry account", { exact: true })
+  ).toHaveCount(1)
+
+  await recipient.context.close()
+})
+
