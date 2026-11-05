@@ -285,33 +285,40 @@ test("searches credentials by account, site, or username and clears accessibly w
   const rows = page
     .getByRole("list", { name: "Saved credentials" })
     .getByRole("listitem")
+
+  // Searching happens in the browser. Other requests (such as the vault's
+  // regular check for changes from other devices) may still go out while the
+  // user types, so check that none of them carries what was searched for.
   const observedRequests: string[] = []
   const recordRequest = (request: Request) => {
-    observedRequests.push(`${request.url()} ${request.postData() ?? ""}`)
+    observedRequests.push(
+      `${request.url()}\n${request.postData() ?? ""}`.toLowerCase()
+    )
+  }
+  const searchTerms: string[] = []
+  const searchFor = async (term: string) => {
+    searchTerms.push(term)
+    await search.fill(term)
   }
   page.on("request", recordRequest)
 
-  await search.fill("WORK")
+  await searchFor("WORK MAIL")
   await expect(rows).toHaveCount(1)
   await expect(rows.first()).toContainText("Work Mail")
-  expect(observedRequests).toEqual([])
 
-  await search.fill("EXAMPLE.EDU")
+  await searchFor("EXAMPLE.EDU")
   await expect(rows).toHaveCount(1)
   await expect(rows.first()).toContainText("Work Mail")
-  expect(observedRequests).toEqual([])
 
-  await search.fill("ALICE@CAMPUS")
+  await searchFor("ALICE@CAMPUS")
   await expect(rows).toHaveCount(1)
   await expect(rows.first()).toContainText("Work Mail")
-  expect(observedRequests).toEqual([])
 
-  await search.fill("no-such-credential")
+  await searchFor("no-such-credential")
   await expect(
     page.getByRole("status").filter({ hasText: "No credentials match" })
   ).toBeVisible()
   await expect(rows).toHaveCount(0)
-  expect(observedRequests).toEqual([])
 
   await search.press("Tab")
   const clearSearch = page.getByRole("button", { name: "Clear search" })
@@ -320,12 +327,23 @@ test("searches credentials by account, site, or username and clears accessibly w
   await expect(search).toHaveValue("")
   await expect(rows).toHaveCount(2)
 
-  await search.fill("PERSONAL")
+  await searchFor("PERSONAL")
   await expect(rows).toHaveCount(1)
   await search.press("Escape")
   await expect(search).toHaveValue("")
   await expect(rows).toHaveCount(2)
   page.off("request", recordRequest)
+
+  for (const term of searchTerms) {
+    const encoded = encodeURIComponent(term)
+    for (const form of new Set([term, encoded, encoded.replace(/%20/g, "+")])) {
+      const needle = form.toLowerCase()
+      expect(
+        observedRequests.filter((request) => request.includes(needle)),
+        `requests containing "${form}"`
+      ).toEqual([])
+    }
+  }
 })
 
 test("previews generated passwords live on the generator page", async ({

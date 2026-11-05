@@ -23,6 +23,8 @@ export function IncomingShares() {
   const [shares, setShares] = useState<IncomingShare[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Bumped by every refresh and every Accept/Decline, so a list that was
+  // requested earlier can't bring back a share the user has just handled.
   const refreshVersion = useRef(0)
   // Shares whose credential has already been saved to the vault. Accepting
   // saves the credential and then removes the share; if the removal fails,
@@ -69,6 +71,7 @@ export function IncomingShares() {
   }
 
   async function handleDecline(share: IncomingShare) {
+    refreshVersion.current++
     setBusyId(share.id)
     try {
       await respondToShare(share.id)
