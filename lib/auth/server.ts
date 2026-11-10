@@ -25,10 +25,15 @@ const userSchema = new Schema({
   salt: { type: String, required: true },
   // Only the account's password can unwrap this; the server cannot.
   wrappedVaultKey: { type: Schema.Types.Mixed, required: true },
+  // Raised with every password change. Missing on older accounts means 0.
+  credentialsVersion: { type: Number },
 })
 const sessionSchema = new Schema({
   tokenDigest: { type: String, required: true, unique: true },
   userId: { type: Schema.Types.ObjectId, required: true },
+  // The account's credentialsVersion when this session signed in. A session
+  // from before the latest password change is no longer accepted.
+  credentialsVersion: { type: Number },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
 })
 const attemptSchema = new Schema({
@@ -266,15 +271,18 @@ export function throttled(seconds: number) {
   return response
 }
 export async function issueSession(
-  user: { _id: unknown; email: string },
+  user: { _id: unknown; email: string; credentialsVersion?: number | null },
   status = 200
 ) {
   const token = randomBytes(32).toString("hex")
   const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS)
+  // Use the version read before the password was checked, so a sign-in that
+  // overlaps a password change cannot outlive it.
   await Session.create({
     tokenDigest: digest(token),
     userId: user._id,
     expiresAt,
+    credentialsVersion: user.credentialsVersion ?? 0,
   })
   const response = json(
     {
@@ -287,12 +295,11 @@ export async function issueSession(
   return response
 }
 
-// Owner-scoped routes use this verified identity, never a client-supplied ID.
-export async function authenticatedUser(
-  request: Request
-): Promise<{ id: string; email: string } | null> {
-  const token = readToken(request)
-  if (!token) return null
+/**
+ * The live session for a token and its account. Sessions signed in before the
+ * account's latest password change are rejected.
+ */
+export async function activeSession(token: string) {
   await connectAuth()
   const session = await Session.findOne({
     tokenDigest: digest(token),
@@ -300,5 +307,20 @@ export async function authenticatedUser(
   })
   if (!session) return null
   const user = await User.findById(session.userId)
-  return user ? { id: String(user._id), email: user.email } : null
+  if (!user) return null
+  if ((session.credentialsVersion ?? 0) !== (user.credentialsVersion ?? 0))
+    return null
+  return { session, user }
+}
+
+// Owner-scoped routes use this verified identity, never a client-supplied ID.
+export async function authenticatedUser(
+  request: Request
+): Promise<{ id: string; email: string } | null> {
+  const token = readToken(request)
+  if (!token) return null
+  const active = await activeSession(token)
+  return active
+    ? { id: String(active.user._id), email: active.user.email }
+    : null
 }
