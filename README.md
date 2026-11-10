@@ -66,6 +66,14 @@ Each browser is identified by a long-lived, HttpOnly device cookie and registere
 
 `/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms on the Settings page. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
 
+## Sharing a credential
+
+A credential can be shared with another account by email (`/api/shares`). Sharing is not end-to-end encrypted: the server encrypts the credential at rest with `SHARE_ENCRYPTION_KEY` (`lib/sharing/server.ts`).
+
+The recipient does not get a copy. Each time they open a shared credential, `GET /api/shares/[id]` decrypts it for them, and only while the share is active. An owner can give a share an end date (1 hour, 1 day, 7 days, 30 days or a chosen date, up to a year) and can remove access at any time. Once a share expires or is removed the route answers 410 with its status and no credential, and the encrypted credential is deleted from the record. The account label and site stay, encrypted separately, so both people still see which share ended. The rules live in `lib/sharing/status.ts`.
+
+`GET /api/shares` lists `incoming` and `outgoing` shares with their status (`active`, `expired` or `removed`) and never includes a credential. `DELETE /api/shares/[id]` lets the owner revoke a share or the recipient decline it, and either one clear an ended share from their own list; the record is deleted once both have. Shares saved before end dates existed read as active with no end date. A password the recipient already copied cannot be taken back, so the owner is reminded to change it.
+
 ## Chrome extension
 
 `extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. The popup signs in, shows the device approval code, and opens the vault: it lists the logins saved for the website in the current tab, searches all of them, and fills the one the user chooses into the page. It is bundled with `Bun.build`; there is no separate package or framework.
