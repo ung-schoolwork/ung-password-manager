@@ -36,13 +36,13 @@ export function GeneratorWorkspace() {
         <CardHeader>
           <CardTitle className="text-lg">Password generator</CardTitle>
           <CardDescription className="text-sm">
-            Adjust the length and character types to see a new password straight
-            away.
+            Choose a password or a passphrase of random words, then adjust the
+            options to see a new one straight away.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <PasswordGeneratorPanel
-            renderActions={(password) => (
+            renderActions={(password, kind) => (
               <div className="space-y-2">
                 <Button
                   className="h-10 w-full text-sm"
@@ -56,7 +56,7 @@ export function GeneratorWorkspace() {
                   ) : (
                     <Copy className="size-4" aria-hidden="true" />
                   )}
-                  {copied ? "Copied" : "Copy password"}
+                  {copied ? "Copied" : `Copy ${kind}`}
                 </Button>
                 <p
                   className="min-h-4 text-xs text-muted-foreground"
