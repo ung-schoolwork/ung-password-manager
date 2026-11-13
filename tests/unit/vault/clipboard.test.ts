@@ -117,6 +117,49 @@ describe("copyWithAutoClear", () => {
     expect(results).toEqual([[copyId, "cleared-unchecked"]])
   })
 
+  it("clears without reading when clipboard reads would ask the user", async () => {
+    let reads = 0
+    const readText = clipboard.readText
+    clipboard.readText = async function () {
+      reads += 1
+      return readText.call(this)
+    }
+    Object.defineProperty(globalThis.navigator, "permissions", {
+      value: { query: async () => ({ state: "prompt" }) },
+      configurable: true,
+    })
+    try {
+      const copyId = await copyWithAutoClear("secret-one")
+
+      await fire(timers.at(-1))
+
+      expect(reads).toBe(0)
+      expect(clipboard.text).toBe("")
+      expect(results).toEqual([[copyId, "cleared-unchecked"]])
+    } finally {
+      clipboard.readText = readText
+      Reflect.deleteProperty(globalThis.navigator, "permissions")
+    }
+  })
+
+  it("checks the clipboard when reads are already granted", async () => {
+    Object.defineProperty(globalThis.navigator, "permissions", {
+      value: { query: async () => ({ state: "granted" }) },
+      configurable: true,
+    })
+    try {
+      await copyWithAutoClear("secret-one")
+      clipboard.text = "something the user copied elsewhere"
+
+      await fire(timers.at(-1))
+
+      expect(clipboard.text).toBe("something the user copied elsewhere")
+      expect(results).toEqual([])
+    } finally {
+      Reflect.deleteProperty(globalThis.navigator, "permissions")
+    }
+  })
+
   it("reports when the clear itself fails", async () => {
     const copyId = await copyWithAutoClear("secret-one")
     clipboard.denyWrite = true

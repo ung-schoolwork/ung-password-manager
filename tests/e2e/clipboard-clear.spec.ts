@@ -311,6 +311,58 @@ test("clears anyway and tells the user when the clipboard cannot be read", async
   )
 })
 
+test("clears without asking for clipboard access the site was not granted", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // A browser that has not been granted clipboard reads would prompt for one
+  // and hold the read until the prompt is answered, so the app must not try.
+  await page.context().clearPermissions()
+  await page.context().grantPermissions(["clipboard-write"])
+  await page.evaluate(() => {
+    const target = window as unknown as { clipboardReads: number }
+    target.clipboardReads = 0
+    navigator.clipboard.readText = () => {
+      target.clipboardReads += 1
+      return new Promise<string>(() => {})
+    }
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard. Your browser didn't let us check it first, so anything you copied since was cleared too.",
+    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+  )
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { clipboardReads: number }).clipboardReads
+    )
+  ).toBe(0)
+
+  // Restore the real read (the stub is an own property) to check the clear.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.evaluate(() => {
+    delete (navigator.clipboard as { readText?: unknown }).readText
+  })
+  expect(await readClipboard(page)).toBe("")
+})
+
+test("clears anyway when a clipboard read never answers", async ({ page }) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a read held by a permission prompt nobody answers.
+  await page.evaluate(() => {
+    navigator.clipboard.readText = () => new Promise<string>(() => {})
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard. Your browser didn't let us check it first, so anything you copied since was cleared too.",
+    { timeout: CLIPBOARD_CLEAR_MS + 2_000 + SAFETY_MARGIN_MS * 2 }
+  )
+})
+
 test("tells the user when the clipboard could not be cleared", async ({
   page,
 }) => {

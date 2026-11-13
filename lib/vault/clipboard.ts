@@ -47,9 +47,7 @@ let copySequence = 0
 //   clear-failed       the browser refused to empty the clipboard, so the
 //                      copied value may still be on it
 export type ClipboardClearResult =
-  | "cleared"
-  | "cleared-unchecked"
-  | "clear-failed"
+  "cleared" | "cleared-unchecked" | "clear-failed"
 
 type ClearListener = (copyId: number, result: ClipboardClearResult) => void
 const clearListeners = new Set<ClearListener>()
@@ -72,6 +70,50 @@ async function digestOf(text: string): Promise<string> {
   return Array.from(new Uint8Array(hash), (byte) =>
     byte.toString(16).padStart(2, "0")
   ).join("")
+}
+
+// How long the auto-clear waits for a clipboard read before giving up on
+// checking and clearing anyway.
+const READ_TIMEOUT_MS = 2_000
+
+// Reads the clipboard for the auto-clear check, or rejects when it cannot be
+// read without asking the user (SCRUM-73). Chrome answers readText() on a site
+// that has not been granted clipboard access with a permission prompt, and the
+// read waits until that prompt is answered: the clear stalled and the password
+// stayed on the clipboard. So only read when access is already granted, and
+// never wait long for the answer. Browsers that cannot report the permission
+// (Firefox, Safari) refuse reads made from a timer, which also rejects here.
+async function readClipboardWithoutPrompt(): Promise<string> {
+  let state: PermissionState | undefined
+  try {
+    state = (
+      await navigator.permissions.query({
+        name: "clipboard-read" as PermissionName,
+      })
+    ).state
+  } catch {
+    state = undefined
+  }
+  if (state === "prompt" || state === "denied")
+    throw new DOMException("Clipboard read not granted", "NotAllowedError")
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      navigator.clipboard.readText(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () =>
+            reject(
+              new DOMException("Clipboard read timed out", "TimeoutError")
+            ),
+          READ_TIMEOUT_MS
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 // Calls `listener` with the copy's id (as returned by copyWithAutoClear) and
@@ -111,7 +153,7 @@ export async function copyWithAutoClear(value: string): Promise<number> {
     let stillOurs = true
     try {
       stillOurs =
-        (await digestOf(await navigator.clipboard.readText())) === digest
+        (await digestOf(await readClipboardWithoutPrompt())) === digest
     } catch {
       // Some browsers block reads. Clearing anyway is safer than leaving a
       // credential sitting in the clipboard, but it may also remove something
