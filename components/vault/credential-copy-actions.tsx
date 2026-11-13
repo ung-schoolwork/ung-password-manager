@@ -4,7 +4,8 @@ import { Check, Copy } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { copyWithAutoClear, onClipboardCleared } from "@/lib/vault/clipboard"
+import { copyWithAutoClear, onClipboardClear } from "@/lib/vault/clipboard"
+import { clipboardClearMessage } from "@/lib/vault/clipboard-messages"
 
 type CopyField = "username" | "password"
 
@@ -21,24 +22,28 @@ export function CredentialCopyActions({
   password: string
 }) {
   const [copiedField, setCopiedField] = useState<CopyField | null>(null)
-  const [clearedField, setClearedField] = useState<CopyField | null>(null)
+  const [clearMessageText, setClearMessageText] = useState<string | null>(
+    null
+  )
   const [copyFailed, setCopyFailed] = useState(false)
-  // The last copy made from these buttons, so the "cleared" message only
-  // shows for a copy of ours.
+  // The last copy made from these buttons, so a clear message only shows for
+  // a copy of ours.
   const lastCopyRef = useRef<{ id: number; field: CopyField } | null>(null)
 
-  // Swap the "copied" message for the "cleared" one. The pending clear never
+  // Swap the "copied" message for how the clear went. The pending clear never
   // holds a callback from here (it would keep this component's props, the
   // password included, alive after unmount); we listen instead, and stop
   // when the buttons unmount.
   useEffect(
     () =>
-      onClipboardCleared((copyId) => {
+      onClipboardClear((copyId, result) => {
         const lastCopy = lastCopyRef.current
         if (lastCopy?.id !== copyId) return
         lastCopyRef.current = null
         setCopiedField(null)
-        setClearedField(lastCopy.field)
+        setClearMessageText(
+          clipboardClearMessage(FIELD_LABELS[lastCopy.field], result)
+        )
       }),
     []
   )
@@ -48,13 +53,13 @@ export function CredentialCopyActions({
       lastCopyRef.current = { id: await copyWithAutoClear(value), field }
     } catch {
       setCopiedField(null)
-      setClearedField(null)
+      setClearMessageText(null)
       setCopyFailed(true)
       return
     }
 
     setCopiedField(field)
-    setClearedField(null)
+    setClearMessageText(null)
     setCopyFailed(false)
   }
 
@@ -79,9 +84,7 @@ export function CredentialCopyActions({
         aria-live="polite"
       >
         {copiedField ? `${FIELD_LABELS[copiedField]} copied.` : ""}
-        {clearedField
-          ? `${FIELD_LABELS[clearedField]} cleared from clipboard.`
-          : ""}
+        {clearMessageText ?? ""}
         {copyFailed
           ? "Could not copy. Check your browser's clipboard permission."
           : ""}

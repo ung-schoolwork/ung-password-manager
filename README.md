@@ -24,7 +24,8 @@ components/vault/    everything specific to this app
 components/settings/ account and device settings
 components/ui/       vendored shadcn/ui primitives - generated, not written by us
 lib/vault/           vault logic: validation, encryption, storage, service
-lib/password-generator.ts   password generation
+lib/password-generator.ts   password and passphrase generation
+lib/eff-large-wordlist.ts   EFF passphrase word list (CC BY 3.0 US, see below)
 extension/           Chrome extension (Manifest V3): popup, service worker, build script
 tests/unit/          bun tests for lib/
 tests/e2e/           playwright tests that drive the real browser
@@ -33,6 +34,12 @@ tests/e2e/           playwright tests that drive the real browser
 Vault encryption and credential operations run in the browser. `lib/vault/service.client.ts` is the one place
 that ties the pieces together: it validates a credential, encrypts the whole
 vault, and hands it to `remote.client.ts` to save through the account. Start there.
+
+## Passphrases
+
+The generator can also build a passphrase of 4 to 10 words (5 by default) drawn with `crypto.getRandomValues` and rejection sampling from the [EFF Large Wordlist](https://www.eff.org/dice) of 7,776 words, about 12.9 bits a word. The list is loaded with a dynamic import, so it is fetched only when a passphrase is generated or the Health checks need it. The Health checks recognise passphrases built from the list and judge them by word count instead of length rules.
+
+The word list in `lib/eff-large-wordlist.ts` is © Electronic Frontier Foundation, used under the [Creative Commons Attribution 3.0 United States](https://creativecommons.org/licenses/by/3.0/us/) licence. Only the dice numbers were removed.
 
 ## One password: sign-in and vault keys
 
@@ -121,7 +128,7 @@ The e2e test opens the real toolbar popup with `chrome.action.openPopup()` and r
 
 Copy `.env.example` to `.env.local`. Set `MONGODB_URI` to your MongoDB Atlas database (or a local MongoDB instance) and `APP_ORIGIN` to the exact origin you will open, such as `http://localhost:3000`. If `APP_ORIGIN` is unset, any origin is accepted outside production. Production requires it, and it must be HTTPS. Keep database credentials server-side; never use `NEXT_PUBLIC_*` for them. Set `SHARE_ENCRYPTION_KEY` to a 32-byte base64 value (generate one with `openssl rand -base64 32`) to enable sharing a credential with another account; sharing fails closed without it.
 
-Production also requires `AUTH_TRUSTED_IP_HEADER` naming a header that your trusted reverse proxy **overwrites** with a single validated client IP. Do not enable it behind a proxy that forwards arbitrary client-supplied values. Missing or invalid source identity fails closed. Development without this setting uses a shared loopback source. Login and registration share database-backed global, source, and source/account rate limits; no account-wide lockout is shared between sources. Hashing is limited to two concurrent jobs per process. Add perimeter request limits when deploying; application throttling is not DDoS protection.
+Production also requires `AUTH_TRUSTED_IP_HEADER`, which names the header your reverse proxy sets to the client IP; see [Deployment](#deployment). Development without this setting uses a shared loopback source. Login and registration share database-backed global, source, and source/account rate limits; no account-wide lockout is shared between sources. Hashing is limited to two concurrent jobs per process. Add perimeter request limits when deploying; application throttling is not DDoS protection.
 
 Mongoose creates unique account/session indexes and expiration indexes for sessions and rate-limit counters before serving authentication requests. The database account needs permission to create these indexes. Accounts store versioned salted scrypt hashes (`N=32768, r=8, p=3`) of the browser-derived auth key; session records store only token digests. Sessions expire after eight hours. Production cookies are Secure, HttpOnly, SameSite Strict, and use the `__Host-` prefix. Sign-out revokes the current session and removes decrypted vault state. Other open tabs are notified; server revocation is also checked on focus and every 30 seconds.
 
@@ -139,6 +146,34 @@ bun dev
 ```
 
 Open <http://localhost:3000>.
+
+## Deployment
+
+Two settings must be right before anyone can sign in or register on a deployed site:
+
+| Variable                 | Value                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `APP_ORIGIN`             | The exact public origin, such as `https://app.example.com`: HTTPS, no path, no trailing slash. Requests from any other origin are refused. |
+| `AUTH_TRUSTED_IP_HEADER` | The header your host or reverse proxy sets to the client IP (table below). Case does not matter.                                           |
+
+Sign-in and registration are rate-limited per client IP, so the server must know which IP each request came from. If `AUTH_TRUSTED_IP_HEADER` is unset, the header is missing from a request, or it does not hold an IP address, those requests are refused (fail closed), never let through without a limit. Users see "Sign-in is temporarily unavailable. Try again later." and the server logs the cause, without header values, at most once every 15 minutes per problem:
+
+```
+[auth] Sign-in and registration are refused: requests are missing the "x-real-ip" header named by AUTH_TRUSTED_IP_HEADER. ...
+```
+
+**Pick the header for your host.** Only trust a header that the proxy in front of the app sets or overwrites itself; a client can send any header it likes.
+
+| Host                               | `AUTH_TRUSTED_IP_HEADER` | Proxy setup                                                                                                                                                                                                                   |
+| ---------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| nginx                              | `x-real-ip`              | `proxy_set_header X-Real-IP $remote_addr;` in the `location` that proxies to the app. This replaces any value the client sent.                                                                                                |
+| Caddy                              | `x-real-ip`              | `reverse_proxy localhost:3000 { header_up X-Real-IP {client_ip} }`. Without `trusted_proxies`, `{client_ip}` is the connecting address.                                                                                       |
+| Cloudflare (proxied DNS or Tunnel) | `cf-connecting-ip`       | Nothing to add; Cloudflare sets it. The origin must accept traffic **only** from Cloudflare (a Tunnel, or a firewall limited to Cloudflare's IP ranges); otherwise anyone can reach the origin directly and forge the header. |
+| Vercel                             | `x-real-ip`              | Nothing to add; Vercel sets it to the client IP and replaces any value the client sent.                                                                                                                                       |
+
+When proxies are chained, configure the one that faces the internet. Behind Cloudflare and then nginx, either use `cf-connecting-ip` (with the origin locked to Cloudflare as above) or have nginx restore the client address with `set_real_ip_from <Cloudflare ranges>; real_ip_header CF-Connecting-IP;` and keep `x-real-ip`.
+
+**How values are read.** Single-value headers such as `x-real-ip` and `cf-connecting-ip` must hold exactly one IPv4 or IPv6 address; a port or IPv6 brackets are accepted, and a comma-separated list is refused. `x-forwarded-for` is the one list form accepted: each proxy appends the address it received the request from, so only the **rightmost** entry was written by the proxy in front of the app. The leftmost entry is whatever the client sent and is never used, because trusting it would let anyone pick their own rate-limit bucket. This means `x-forwarded-for` gives the right answer only when exactly one proxy that appends (such as nginx with `$proxy_add_x_forwarded_for`) sits in front of the app; with more hops it yields a proxy's address, so prefer a single-value header. The RFC 7239 `Forwarded` header is not supported.
 
 ## Checks
 

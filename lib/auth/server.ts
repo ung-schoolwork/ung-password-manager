@@ -1,11 +1,18 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto"
-import { isIP } from "node:net"
 import mongoose, { Schema } from "mongoose"
 import { NextResponse } from "next/server"
-import { isValidAccountEmail, normalizeAccountEmail } from "@/lib/auth/shared"
+import {
+  AUTH_SOURCE_UNAVAILABLE,
+  isValidAccountEmail,
+  normalizeAccountEmail,
+} from "@/lib/auth/shared"
 import { parseWrappedVaultKey } from "@/lib/vault/remote"
 import type { WrappedVaultKey } from "@/lib/vault/types"
 import { isAllowedOrigin } from "@/lib/auth/origin"
+import {
+  reportSourceProblem,
+  resolveSourceAddress,
+} from "@/lib/auth/source-address"
 
 export const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000
 export const SESSION_COOKIE =
@@ -196,13 +203,20 @@ export async function validAuthKey(
   return timingSafeEqual(actual, expected) && !!hash?.startsWith(HASH_PREFIX)
 }
 
+// Null fails closed: the caller must refuse the request.
 export function sourceAddress(request: Request) {
-  const header = process.env.AUTH_TRUSTED_IP_HEADER
-  if (header) {
-    const source = request.headers.get(header)?.trim()
-    return source && isIP(source) ? source : null
+  const settings = {
+    AUTH_TRUSTED_IP_HEADER: process.env.AUTH_TRUSTED_IP_HEADER,
+    NODE_ENV: process.env.NODE_ENV,
   }
-  return process.env.NODE_ENV === "production" ? null : "127.0.0.1"
+  const result = resolveSourceAddress(request.headers, settings)
+  if (result.address === null)
+    reportSourceProblem(result.problem, settings.AUTH_TRUSTED_IP_HEADER)
+  return result.address
+}
+/** Sent with a 503 when the client IP cannot be resolved, so no rate limit applies. */
+export function sourceUnavailable() {
+  return json({ error: AUTH_SOURCE_UNAVAILABLE }, 503)
 }
 export async function increment(key: string, now: Date) {
   const expiresAt = new Date(now.getTime() + LIMIT_WINDOW_MS)
