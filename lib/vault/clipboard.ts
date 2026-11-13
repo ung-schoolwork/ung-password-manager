@@ -29,15 +29,34 @@ const CLEAR_AFTER_MS = clearAfterMs()
 // itself (SCRUM-64): only a digest is kept, and nothing the timer closes over
 // may reference the plaintext. That includes callbacks from the component
 // that copied: a closure created in a component keeps the component's scope
-// (and its props, such as the password) alive. Components hear about a clear
-// through onClipboardCleared instead, and stop listening when they unmount.
+// (and its props, such as the password) alive. Components hear how a clear
+// went through onClipboardClear instead, and stop listening when they unmount.
 let pendingClear: {
   timer: ReturnType<typeof setTimeout>
   digest: string
   sequence: number
 } | null = null
 let copySequence = 0
-const clearedListeners = new Set<(copyId: number) => void>()
+
+// How an auto-clear ended (SCRUM-38). Nothing is reported when the clipboard
+// no longer held our copy, because then there was nothing of ours to clear.
+//   cleared            the clipboard still held our copy and was emptied
+//   cleared-unchecked  the browser refused to let us read the clipboard, so it
+//                      was emptied without checking; anything copied since
+//                      (outside this page) was emptied too
+//   clear-failed       the browser refused to empty the clipboard, so the
+//                      copied value may still be on it
+export type ClipboardClearResult =
+  | "cleared"
+  | "cleared-unchecked"
+  | "clear-failed"
+
+type ClearListener = (copyId: number, result: ClipboardClearResult) => void
+const clearListeners = new Set<ClearListener>()
+
+function notify(copyId: number, result: ClipboardClearResult) {
+  for (const listener of clearListeners) listener(copyId, result)
+}
 
 function cancelPendingClear() {
   if (!pendingClear) return
@@ -55,21 +74,20 @@ async function digestOf(text: string): Promise<string> {
   ).join("")
 }
 
-// Calls `listener` with the copy's id (as returned by copyWithAutoClear) each
-// time a copy is actually cleared from the clipboard. Returns a function that
-// stops listening; call it on unmount.
-export function onClipboardCleared(
-  listener: (copyId: number) => void
-): () => void {
-  clearedListeners.add(listener)
+// Calls `listener` with the copy's id (as returned by copyWithAutoClear) and
+// the outcome each time an auto-clear runs for a copy that was still on the
+// clipboard (or could not be checked). Returns a function that stops
+// listening; call it on unmount.
+export function onClipboardClear(listener: ClearListener): () => void {
+  clearListeners.add(listener)
   return () => {
-    clearedListeners.delete(listener)
+    clearListeners.delete(listener)
   }
 }
 
 // Copies `value` and schedules it to be cleared. Rejects if the browser
-// refuses the copy. Resolves with an id for this copy, which
-// onClipboardCleared listeners receive if it is cleared.
+// refuses the copy. Resolves with an id for this copy, which onClipboardClear
+// listeners receive when its auto-clear runs.
 export async function copyWithAutoClear(value: string): Promise<number> {
   await navigator.clipboard.writeText(value)
 
@@ -89,28 +107,31 @@ export async function copyWithAutoClear(value: string): Promise<number> {
 
     // Only clear if the clipboard still holds what we copied — the user may
     // have copied something else in the meantime (SCRUM-24 AC).
+    let checked = true
     let stillOurs = true
     try {
       stillOurs =
         (await digestOf(await navigator.clipboard.readText())) === digest
     } catch {
-      // Some browsers block reads; clearing anyway is safer than leaving a
-      // credential sitting in the clipboard.
+      // Some browsers block reads. Clearing anyway is safer than leaving a
+      // credential sitting in the clipboard, but it may also remove something
+      // the user copied elsewhere, so the user is told (SCRUM-38).
+      checked = false
     }
 
     // A copy may have landed while the clipboard was being read.
     if (pendingClear?.sequence !== sequence) return
     pendingClear = null
 
-    if (stillOurs) {
-      try {
-        await navigator.clipboard.writeText("")
-      } catch {
-        // Leave things as they are if the clear itself fails.
-        return
-      }
-      for (const listener of clearedListeners) listener(sequence)
+    if (!stillOurs) return
+
+    try {
+      await navigator.clipboard.writeText("")
+    } catch {
+      notify(sequence, "clear-failed")
+      return
     }
+    notify(sequence, checked ? "cleared" : "cleared-unchecked")
   }, CLEAR_AFTER_MS)
 
   pendingClear = { timer, digest, sequence }
