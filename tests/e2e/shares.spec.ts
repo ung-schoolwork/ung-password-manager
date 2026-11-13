@@ -38,11 +38,18 @@ async function addCredential(page: Page, label: string) {
   await expect(page.getByText(label)).toBeVisible()
 }
 
-async function shareWith(page: Page, label: string, recipientEmail: string) {
+async function shareWith(
+  page: Page,
+  label: string,
+  recipientEmail: string,
+  accessEnds?: string
+) {
   await page.getByRole("button", { name: `Share ${label}` }).click()
   const dialog = page.getByRole("dialog")
   await expect(dialog).toContainText(`Share ${label}`)
   await dialog.getByLabel("Recipient's email").fill(recipientEmail)
+  if (accessEnds)
+    await dialog.getByLabel("Access ends").selectOption({ label: accessEnds })
   await dialog.getByRole("button", { name: "Share", exact: true }).click()
   await expect(
     dialog.getByRole("heading", { name: "Credential shared" })
@@ -51,7 +58,19 @@ async function shareWith(page: Page, label: string, recipientEmail: string) {
   await expect(dialog).toHaveCount(0)
 }
 
-test("sharing a credential delivers it to the recipient, who can accept it into their own vault", async ({
+async function openSharedWithYou(page: Page) {
+  await page.goto("/vault")
+  await unlockVault(page)
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(
+    page.getByRole("heading", { name: "Shared with you" })
+  ).toBeVisible({ timeout: 15_000 })
+}
+
+test("sharing a credential lets the recipient open it from their vault", async ({
   page,
   browser,
 }) => {
@@ -61,31 +80,112 @@ test("sharing a credential delivers it to the recipient, who can accept it into 
   await addCredential(page, "Shared account")
   await shareWith(page, "Shared account", recipient.account.email)
 
-  await recipient.page.goto("/vault")
-  await unlockVault(recipient.page)
-  await expect(
-    recipient.page.getByRole("dialog", { name: "Add a credential" })
-  ).toBeVisible()
-  await recipient.page.keyboard.press("Escape")
-  await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toBeVisible({ timeout: 15_000 })
-  await expect(recipient.page.getByText("Shared account")).toBeVisible()
+  const sharedByYou = page.getByRole("list", { name: "Shared by you" })
+  await expect(sharedByYou).toContainText("Shared account")
+  await expect(sharedByYou).toContainText("Active")
+  await expect(sharedByYou).toContainText("No end date")
 
-  await recipient.page.getByRole("button", { name: "Accept" }).click()
+  await openSharedWithYou(recipient.page)
+  const shared = recipient.page.getByRole("list", { name: "Shared with you" })
+  await expect(shared).toContainText("Shared account")
+  await expect(shared).toContainText("Active")
+  await expect(shared).not.toContainText("share-user")
+
+  await recipient.page
+    .getByRole("button", { name: "Open Shared account" })
+    .click()
+  await expect(shared).toContainText("share-user")
   await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toHaveCount(0)
-  await expect(
-    recipient.page
-      .getByRole("list", { name: "Saved credentials" })
-      .getByText("Shared account")
+    shared.getByRole("button", { name: "Copy password" })
   ).toBeVisible()
+  await expect(shared).not.toContainText("shared-credential-password-123")
 
   await recipient.context.close()
 })
 
-test("declining a shared credential removes it without adding it to the recipient's vault", async ({
+test("an end date is shown to both people while access is active", async ({
+  page,
+  browser,
+}) => {
+  await accountWithVault(page)
+  const recipient = await secondAccountWithVault(browser)
+
+  await addCredential(page, "Dated account")
+  await shareWith(
+    page,
+    "Dated account",
+    recipient.account.email,
+    "After 7 days"
+  )
+
+  await expect(page.getByRole("list", { name: "Shared by you" })).toContainText(
+    "Access ends"
+  )
+
+  await openSharedWithYou(recipient.page)
+  await expect(
+    recipient.page.getByRole("list", { name: "Shared with you" })
+  ).toContainText("Access ends")
+
+  await recipient.context.close()
+})
+
+test("removing access stops the recipient from opening the credential", async ({
+  page,
+  browser,
+}) => {
+  await accountWithVault(page)
+  const recipient = await secondAccountWithVault(browser)
+
+  await addCredential(page, "Revoked account")
+  await shareWith(page, "Revoked account", recipient.account.email)
+  await openSharedWithYou(recipient.page)
+
+  const sharedByYou = page.getByRole("list", { name: "Shared by you" })
+  await sharedByYou
+    .getByRole("button", {
+      name: `Remove access to Revoked account for ${recipient.account.email}`,
+    })
+    .click()
+  await page
+    .getByRole("group", {
+      name: `Confirm removing access for ${recipient.account.email}`,
+    })
+    .getByRole("button", { name: "Remove access" })
+    .click()
+  await expect(sharedByYou).toContainText("Removed")
+  await expect(sharedByYou).toContainText("You removed access")
+
+  // The recipient's page still lists it as active until it refreshes; the
+  // server refuses to open it all the same.
+  await recipient.page
+    .getByRole("button", { name: "Open Revoked account" })
+    .click()
+  const shared = recipient.page.getByRole("list", { name: "Shared with you" })
+  await expect(shared).toContainText(
+    "Your access to this shared credential was removed."
+  )
+  await expect(shared).not.toContainText("share-user")
+
+  const { incoming } = (await (
+    await recipient.page.request.get("/api/shares")
+  ).json()) as { incoming: { id: string; status: string }[] }
+  expect(incoming[0].status).toBe("removed")
+  const read = await recipient.page.request.get(`/api/shares/${incoming[0].id}`)
+  expect(read.status()).toBe(410)
+  expect(await read.text()).not.toContain("shared-credential-password-123")
+
+  await recipient.page
+    .getByRole("button", { name: /^Clear Revoked account/ })
+    .click()
+  await expect(
+    recipient.page.getByRole("heading", { name: "Shared with you" })
+  ).toHaveCount(0)
+
+  await recipient.context.close()
+})
+
+test("a recipient can remove a shared credential, and the owner sees it was removed", async ({
   page,
   browser,
 }) => {
@@ -94,22 +194,21 @@ test("declining a shared credential removes it without adding it to the recipien
 
   await addCredential(page, "Declined account")
   await shareWith(page, "Declined account", recipient.account.email)
+  await openSharedWithYou(recipient.page)
 
-  await recipient.page.goto("/vault")
-  await unlockVault(recipient.page)
-  await expect(
-    recipient.page.getByRole("dialog", { name: "Add a credential" })
-  ).toBeVisible()
-  await recipient.page.keyboard.press("Escape")
-  await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toBeVisible({ timeout: 15_000 })
-
-  await recipient.page.getByRole("button", { name: "Decline" }).click()
+  await recipient.page
+    .getByRole("button", { name: /^Remove Declined account/ })
+    .click()
   await expect(
     recipient.page.getByRole("heading", { name: "Shared with you" })
   ).toHaveCount(0)
   await expect(recipient.page.getByText("Declined account")).toHaveCount(0)
+
+  await page.reload()
+  await unlockVault(page)
+  const sharedByYou = page.getByRole("list", { name: "Shared by you" })
+  await expect(sharedByYou).toContainText("Removed", { timeout: 15_000 })
+  await expect(sharedByYou).toContainText("They removed it")
 
   await recipient.context.close()
 })
@@ -143,7 +242,7 @@ test("the API rejects sharing a credential with yourself or with an unknown acco
   expect(missing.status()).toBe(404)
 })
 
-test("a signed-in device that has not been approved cannot list, create, or respond to shares", async ({
+test("a signed-in device that has not been approved cannot list, create, open, or respond to shares", async ({
   page,
   browser,
 }) => {
@@ -184,8 +283,14 @@ test("a signed-in device that has not been approved cannot list, create, or resp
 
   const pending = await recipient.page.request.get("/api/shares")
   expect(pending.status()).toBe(200)
-  const { shares } = (await pending.json()) as { shares: { id: string }[] }
+  const { incoming: shares } = (await pending.json()) as {
+    incoming: { id: string }[]
+  }
   expect(shares).toHaveLength(1)
+
+  const read = await context.request.get(`/api/shares/${shares[0].id}`)
+  expect(read.status()).toBe(403)
+  expect(await read.text()).not.toContain("shared-credential-password-123")
 
   const respond = await context.request.delete(`/api/shares/${shares[0].id}`, {
     headers: { Origin: origin },
@@ -194,13 +299,15 @@ test("a signed-in device that has not been approved cannot list, create, or resp
 
   // The share is still waiting for the recipient's approved device.
   const after = await recipient.page.request.get("/api/shares")
-  expect(((await after.json()) as { shares: unknown[] }).shares).toHaveLength(1)
+  expect(
+    ((await after.json()) as { incoming: { status: string }[] }).incoming
+  ).toMatchObject([{ status: "active" }])
 
   await context.close()
   await recipient.context.close()
 })
 
-test("an unauthenticated request cannot list, create, or respond to shares", async ({
+test("an unauthenticated request cannot list, create, open, or respond to shares", async ({
   browser,
 }) => {
   const context = await browser.newContext()
@@ -223,71 +330,13 @@ test("an unauthenticated request cannot list, create, or respond to shares", asy
   })
   expect(create.status()).toBe(401)
 
+  const read = await context.request.get("/api/shares/anything")
+  expect(read.status()).toBe(401)
+
   const respond = await context.request.delete("/api/shares/anything", {
     headers: { Origin: origin },
   })
   expect(respond.status()).toBe(401)
 
   await context.close()
-})
-
-test("retrying Accept after a failed share removal does not add the credential twice", async ({
-  page,
-  browser,
-}) => {
-  await accountWithVault(page)
-  const recipient = await secondAccountWithVault(browser)
-
-  await addCredential(page, "Retry account")
-  await shareWith(page, "Retry account", recipient.account.email)
-
-  await recipient.page.goto("/vault")
-  await unlockVault(recipient.page)
-  await expect(
-    recipient.page.getByRole("dialog", { name: "Add a credential" })
-  ).toBeVisible()
-  await recipient.page.keyboard.press("Escape")
-  await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toBeVisible({ timeout: 15_000 })
-
-  // Make the first removal attempt fail after the credential has already
-  // been saved, then let a retry succeed.
-  let deleteAttempts = 0
-  await recipient.page.route("**/api/shares/*", async (route) => {
-    if (route.request().method() !== "DELETE") {
-      await route.continue()
-      return
-    }
-    deleteAttempts += 1
-    if (deleteAttempts === 1) {
-      await route.fulfill({
-        status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "boom" }),
-      })
-      return
-    }
-    await route.continue()
-  })
-
-  await recipient.page.getByRole("button", { name: "Accept" }).click()
-  await expect(
-    recipient.page.getByText("Could not accept that credential. Try again.")
-  ).toBeVisible()
-  await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toBeVisible()
-
-  await recipient.page.getByRole("button", { name: "Accept" }).click()
-  await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toHaveCount(0)
-  await expect(
-    recipient.page
-      .getByRole("list", { name: "Saved credentials" })
-      .getByText("Retry account", { exact: true })
-  ).toHaveCount(1)
-
-  await recipient.context.close()
 })
