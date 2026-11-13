@@ -1,6 +1,7 @@
 "use client"
 
 import { useAccount } from "@/components/auth/account-provider"
+import { AutoLockSettings } from "@/components/settings/auto-lock-settings"
 import { DeviceSettings } from "@/components/settings/device-settings"
 import { PasswordSettings } from "@/components/settings/password-settings"
 import {
@@ -40,6 +41,7 @@ export function SettingsWorkspace() {
 
       <PasswordSettings email={session.user.email} />
       <DeviceSettings accountId={session.user.id} />
+      <AutoLockSettings />
     </div>
   )
 }
