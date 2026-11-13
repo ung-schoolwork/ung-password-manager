@@ -23,6 +23,7 @@ import {
   HealthShield,
 } from "@/components/vault/health-shield"
 import { ShareCredentialDialog } from "@/components/vault/share-credential-dialog"
+import { usePassphraseWordSet } from "@/components/vault/use-passphrase-word-set"
 import {
   analyzeCredentialsHealth,
   type CredentialHealthReport,
@@ -44,9 +45,10 @@ export function CredentialList({
   onEditCredential(credential: Credential): void
   editingCredentialId: string | null
 }) {
+  const passphraseWords = usePassphraseWordSet()
   const audited = useMemo(
-    () => analyzeCredentialsHealth(credentials),
-    [credentials]
+    () => analyzeCredentialsHealth(credentials, passphraseWords),
+    [credentials, passphraseWords]
   )
   const [credentialToShare, setCredentialToShare] = useState<Credential | null>(
     null

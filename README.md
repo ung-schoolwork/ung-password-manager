@@ -24,7 +24,8 @@ components/vault/    everything specific to this app
 components/settings/ account and device settings
 components/ui/       vendored shadcn/ui primitives - generated, not written by us
 lib/vault/           vault logic: validation, encryption, storage, service
-lib/password-generator.ts   password generation
+lib/password-generator.ts   password and passphrase generation
+lib/eff-large-wordlist.ts   EFF passphrase word list (CC BY 3.0 US, see below)
 extension/           Chrome extension (Manifest V3): popup, service worker, build script
 tests/unit/          bun tests for lib/
 tests/e2e/           playwright tests that drive the real browser
@@ -33,6 +34,12 @@ tests/e2e/           playwright tests that drive the real browser
 Vault encryption and credential operations run in the browser. `lib/vault/service.client.ts` is the one place
 that ties the pieces together: it validates a credential, encrypts the whole
 vault, and hands it to `remote.client.ts` to save through the account. Start there.
+
+## Passphrases
+
+The generator can also build a passphrase of 4 to 10 words (5 by default) drawn with `crypto.getRandomValues` and rejection sampling from the [EFF Large Wordlist](https://www.eff.org/dice) of 7,776 words, about 12.9 bits a word. The list is loaded with a dynamic import, so it is fetched only when a passphrase is generated or the Health checks need it. The Health checks recognise passphrases built from the list and judge them by word count instead of length rules.
+
+The word list in `lib/eff-large-wordlist.ts` is © Electronic Frontier Foundation, used under the [Creative Commons Attribution 3.0 United States](https://creativecommons.org/licenses/by/3.0/us/) licence. Only the dice numbers were removed.
 
 ## One password: sign-in and vault keys
 
