@@ -191,6 +191,11 @@ button:focus-visible {
   display: none;
 }
 
+.row > input {
+  flex: 1;
+  min-width: 0;
+}
+
 .entries li + li {
   border-top: 1px solid var(--border);
 }
@@ -203,4 +208,9 @@ button:focus-visible {
 .entries .username {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.row > button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }

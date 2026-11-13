@@ -1,8 +1,8 @@
 // The popup's account and vault state. All secrets live here, in the popup's
 // memory, and nowhere else: the wrapping key derived from the password, the
-// unwrapped vault key, and the decrypted list of logins (without passwords).
-// Closing the popup
-// discards them; reopening it asks for the password again. Nothing is written
+// unwrapped vault key, the decrypted list of logins (without passwords), and a
+// login being saved until it is encrypted. Closing the popup discards them;
+// reopening it asks for the password again. Nothing is written
 // to extension storage, and the service worker only relays requests.
 
 import {
@@ -17,13 +17,25 @@ import {
   tabSiteHost,
   type FillProblem,
 } from "@/lib/vault/site-match"
-import type { VaultEnvelope } from "@/lib/vault/types"
+import {
+  VAULT_DATA_VERSION,
+  type Credential,
+  type CredentialDraft,
+  type VaultDataV1,
+  type VaultEnvelope,
+} from "@/lib/vault/types"
+import {
+  CredentialValidationError,
+  validateCredentialDraft,
+  type CredentialField,
+} from "@/lib/vault/validation"
 
 import type { ExtensionRequest, ExtensionResponses, VaultSnapshot } from "./api"
-import type { FillOutcome } from "./fill-page"
+import type { FillOutcome, PageLogin } from "./fill-page"
 import {
   decryptVault,
   deriveAccountKeys,
+  encryptVault,
   unwrapVaultKey,
   VaultUnlockError,
 } from "./vault"
@@ -56,7 +68,24 @@ export type PopupView =
       /** The result of the last fill, if any. */
       notice: Notice | null
     }
+  | {
+      name: "save"
+      email: string
+      draft: SaveDraft
+      /** Problems with single fields, shown next to them. */
+      errors: Partial<Record<CredentialField, string>>
+      error: string | null
+      busy: boolean
+    }
   | { name: "unavailable" }
+
+/** A login the user is about to save from the popup. */
+export interface SaveDraft {
+  accountName: string
+  siteOrApp: string
+  username: string
+  password: string
+}
 
 export interface Notice {
   text: string
@@ -89,6 +118,8 @@ export interface PopupControllerOptions {
   currentTab?: () => Promise<CurrentTab | null>
   /** Fills the login into the tab; null when the page could not be reached. */
   fillPage?: (tabId: number, login: FillLogin) => Promise<FillOutcome | null>
+  /** Reads the sign-in fields the user filled in on the tab, to save them. */
+  readPage?: (tabId: number) => Promise<PageLogin | null>
   /** How often a waiting device checks whether it has been approved. */
   approvalPollMs?: number
   /** How often an open vault checks it may still be shown. */
@@ -130,7 +161,14 @@ const MESSAGES = {
     "Can't reach UNG Password Manager right now. Check your connection and try again.",
   signOutFailed: "Sign-out could not be completed. Try signing out again.",
   signedOut: "You were signed out.",
+  saveFailed:
+    "Your login couldn't be saved. Check your connection and try again.",
+  saveBusy:
+    "Your vault is changing on another device. Wait a moment, then save again.",
 }
+
+// Saves attempted against newer vaults from other devices before giving up.
+const SAVE_ATTEMPTS = 3
 
 export class PopupController {
   private readonly send: Send
@@ -145,6 +183,7 @@ export class PopupController {
     tabId: number,
     login: FillLogin
   ) => Promise<FillOutcome | null>
+  private readonly readPage: (tabId: number) => Promise<PageLogin | null>
 
   // Bumped whenever the account state is reset, so a reply to an earlier
   // request can never reopen a vault that was locked in the meantime.
@@ -174,6 +213,7 @@ export class PopupController {
     this.tabUrl = options.tabUrl ?? null
     this.currentTab = options.currentTab ?? (async () => null)
     this.fillPage = options.fillPage ?? (async () => null)
+    this.readPage = options.readPage ?? (async () => null)
     this.site = tabSiteHost(this.tabUrl)
   }
 
@@ -297,6 +337,124 @@ export class PopupController {
     } finally {
       this.filling = false
     }
+  }
+
+  /**
+   * Starts saving a login for the current website. When the page has a
+   * sign-in form the user filled in, its username and password are offered.
+   */
+  async startSave(): Promise<void> {
+    if (this.view.name !== "vault" || !this.account) return
+    const generation = this.generation
+    const email = this.account.email
+    const tab = await this.currentTab()
+    if (generation !== this.generation || this.view.name !== "vault") return
+    const host = tabSiteHost(tab?.url)
+    const page = tab && host ? await this.readPage(tab.id) : null
+    if (generation !== this.generation || this.view.name !== "vault") return
+    const typed = page && !("refused" in page) ? page : null
+    this.notice = null
+    this.show({
+      name: "save",
+      email,
+      draft: {
+        accountName: host ?? "",
+        siteOrApp: host ?? "",
+        username: typed?.username ?? "",
+        password: typed?.password ?? "",
+      },
+      errors: {},
+      error: null,
+      busy: false,
+    })
+  }
+
+  /** Leaves the save form without saving. */
+  cancelSave(): void {
+    if (this.view.name !== "save" || this.view.busy) return
+    this.showVault()
+  }
+
+  /**
+   * Adds a login to the vault. The whole vault is encrypted again here, with
+   * the vault key, and only ciphertext leaves the popup. If another device
+   * saved first, the newer vault is loaded and the login is added to it.
+   */
+  async saveLogin(draft: SaveDraft): Promise<void> {
+    if (this.view.name !== "save" || this.view.busy || !this.account) return
+    const email = this.account.email
+    const showForm = (
+      errors: Partial<Record<CredentialField, string>>,
+      error: string | null,
+      busy = false
+    ) => this.show({ name: "save", email, draft, errors, error, busy })
+    let normalized: CredentialDraft
+    try {
+      normalized = validateCredentialDraft(draft)
+    } catch (error) {
+      if (error instanceof CredentialValidationError)
+        return showForm(error.fields, null)
+      throw error
+    }
+    const generation = this.generation
+    showForm({}, null, true)
+    const timestamp = new Date().toISOString()
+    const credential: Credential = {
+      ...normalized,
+      id: crypto.randomUUID(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      passwordUpdatedAt: timestamp,
+    }
+    for (let attempt = 1; attempt <= SAVE_ATTEMPTS; attempt++) {
+      const vaultKey = this.vaultKey
+      const base = { envelope: this.envelope, revision: this.revision }
+      if (!vaultKey) return
+      let data: VaultDataV1
+      let envelope: VaultEnvelope
+      try {
+        data = base.envelope
+          ? await decryptVault(vaultKey, base.envelope)
+          : { version: VAULT_DATA_VERSION, credentials: [] }
+        data = { ...data, credentials: [credential, ...data.credentials] }
+        envelope = await encryptVault(vaultKey, data)
+      } catch {
+        if (generation === this.generation) showForm({}, MESSAGES.saveFailed)
+        return
+      }
+      if (generation !== this.generation) return
+      const result = await this.send({
+        type: "save-vault",
+        envelope,
+        expectedRevision: base.revision,
+      })
+      if (generation !== this.generation) return
+      if (result.state === "saved") {
+        this.envelope = envelope
+        this.revision = result.revision
+        this.setEntries(data.credentials)
+        this.notice = {
+          text: `Saved ${credential.accountName}.`,
+          tone: "info",
+        }
+        return this.showVault()
+      }
+      if (result.state === "signed-out")
+        return this.showSignIn(MESSAGES.signedOut)
+      if (result.state === "not-approved") {
+        this.forgetVault()
+        this.show({ name: "loading" })
+        return this.checkDevice(generation)
+      }
+      if (result.state !== "conflict") return showForm({}, MESSAGES.saveFailed)
+      // Another device saved first: add the login to its vault instead.
+      const latest = await this.send({ type: "vault" })
+      if (generation !== this.generation) return
+      if (latest.state !== "ok") return showForm({}, MESSAGES.saveFailed)
+      this.envelope = latest.snapshot.envelope
+      this.revision = latest.snapshot.revision
+    }
+    showForm({}, MESSAGES.saveBusy)
   }
 
   /** Locks the vault but keeps the browser signed in. */
@@ -468,7 +626,15 @@ export class PopupController {
     this.vaultKey = vaultKey
     this.revision = snapshot.revision
     this.envelope = snapshot.envelope
-    this.entries = data.credentials
+    this.setEntries(data.credentials)
+    // A login being saved stays on screen; the list behind it is up to date.
+    if (this.view.name !== "save") this.showVault()
+    this.schedule(generation, this.vaultPollMs, () => this.watch(generation))
+  }
+
+  /** Keeps the name, website, and username of each login; not passwords. */
+  private setEntries(credentials: Credential[]) {
+    this.entries = credentials
       .map(({ id, accountName, siteOrApp, username }) => ({
         id,
         accountName,
@@ -482,8 +648,6 @@ export class PopupController {
       )
     this.searchIndex = indexCredentialSearch(this.entries)
     this.siteEntries = credentialsForSite(this.entries, this.tabUrl)
-    this.showVault()
-    this.schedule(generation, this.vaultPollMs, () => this.watch(generation))
   }
 
   // While the vault is shown, confirm the browser is still signed in to the

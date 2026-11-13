@@ -1,15 +1,17 @@
-// The service worker is the extension's only API client. Popups and (later)
-// content scripts ask it over runtime messaging instead of calling the app
-// themselves: a content script's requests would carry the visited site's
-// origin, which the server rejects.
+// The service worker is the extension's only API client. The popup asks it
+// over runtime messaging instead of calling the app itself. Scripts injected
+// into pages never call it: their requests would carry the visited site's
+// origin, which the server rejects, and the service worker refuses them.
 //
 // Requests carry the browser's own session and device cookies, because the
 // extension has host permission for the app's origin. The service worker only
-// ever handles ciphertext and the auth key: it never sees the password, the
-// vault keys, or decrypted vault data, and it keeps nothing between messages.
+// ever handles ciphertext (including vaults the popup encrypted to save) and
+// the auth key: it never sees the password, the vault keys, or decrypted
+// vault data, and it keeps nothing between messages.
 
 import {
   isVaultRevision,
+  MAX_VAULT_REQUEST_BYTES,
   parseVaultWrite,
   parseWrappedVaultKey,
 } from "@/lib/vault/remote"
@@ -57,6 +59,14 @@ export type RevisionResult =
 
 export type SignOutResult = SignedOut | Unavailable
 
+export type SaveVaultResult =
+  | { state: "saved"; revision: string }
+  /** Another device saved a newer vault first; nothing was overwritten. */
+  | { state: "conflict" }
+  | SignedOut
+  | NotApproved
+  | Unavailable
+
 export type ExtensionRequest =
   | { type: "session" }
   | { type: "sign-in"; email: string; authKey: string }
@@ -64,6 +74,11 @@ export type ExtensionRequest =
   | { type: "device" }
   | { type: "vault" }
   | { type: "revision" }
+  | {
+      type: "save-vault"
+      envelope: VaultEnvelope
+      expectedRevision: string | null
+    }
 
 /** What the service worker answers to each request type. */
 export interface ExtensionResponses {
@@ -73,9 +88,10 @@ export interface ExtensionResponses {
   device: DeviceStatus
   vault: VaultResult
   revision: RevisionResult
+  "save-vault": SaveVaultResult
 }
 
-const SIMPLE_TYPES = new Set([
+const SIMPLE_TYPES = new Set<string>([
   "session",
   "sign-out",
   "device",
@@ -85,7 +101,16 @@ const SIMPLE_TYPES = new Set([
 
 export function isExtensionRequest(value: unknown): value is ExtensionRequest {
   if (typeof value !== "object" || value === null) return false
-  const { type, email, authKey } = value as Record<string, unknown>
+  const { type, email, authKey, envelope, expectedRevision } = value as Record<
+    string,
+    unknown
+  >
+  if (type === "save-vault")
+    return (
+      parseVaultWrite({ envelope, expectedRevision }) !== null &&
+      JSON.stringify({ envelope, expectedRevision }).length <=
+        MAX_VAULT_REQUEST_BYTES
+    )
   if (type === "sign-in")
     return (
       typeof email === "string" &&
@@ -102,7 +127,7 @@ async function call(
   appOrigin: string,
   path: string,
   fetchImpl: Fetch,
-  init: { method: "GET" | "POST"; body?: unknown } = { method: "GET" }
+  init: { method: "GET" | "POST" | "PUT"; body?: unknown } = { method: "GET" }
 ): Promise<{ status: number; body: unknown } | null> {
   try {
     const response = await fetchImpl(`${appOrigin}${path}`, {
@@ -261,6 +286,31 @@ export async function fetchRevision(
     : { state: "unavailable" }
 }
 
+/**
+ * Saves a vault the popup encrypted. The server accepts it only if the vault
+ * is still at `expectedRevision`, so a newer save from another device is never
+ * overwritten.
+ */
+export async function saveVault(
+  appOrigin: string,
+  write: { envelope: VaultEnvelope; expectedRevision: string | null },
+  fetchImpl: Fetch = fetch
+): Promise<SaveVaultResult> {
+  const result = await call(appOrigin, "/api/vault", fetchImpl, {
+    method: "PUT",
+    body: {
+      envelope: write.envelope,
+      expectedRevision: write.expectedRevision,
+    },
+  })
+  if (result?.status === 409) return { state: "conflict" }
+  if (result?.status !== 200) return vaultAccessFailure(result?.status)
+  const revision = (result.body as { revision?: unknown } | null)?.revision
+  return isVaultRevision(revision)
+    ? { state: "saved", revision }
+    : { state: "unavailable" }
+}
+
 /** Answers one popup request. */
 export function handleRequest(
   appOrigin: string,
@@ -280,5 +330,7 @@ export function handleRequest(
       return fetchVault(appOrigin, fetchImpl)
     case "revision":
       return fetchRevision(appOrigin, fetchImpl)
+    case "save-vault":
+      return saveVault(appOrigin, request, fetchImpl)
   }
 }
