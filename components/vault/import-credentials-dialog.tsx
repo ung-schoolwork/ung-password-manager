@@ -17,6 +17,11 @@ import {
   type ImportParseResult,
 } from "@/lib/vault/csv-import"
 import type { CredentialDraft } from "@/lib/vault/types"
+import {
+  importIssuesMessage,
+  importReadyMessage,
+  importSkippedMessage,
+} from "@/lib/vault/import-messages"
 
 export type ImportOutcome = {
   succeeded: number
@@ -183,10 +188,12 @@ export function ImportCredentialsDialog({
             <DialogHeader>
               <DialogTitle>Review before importing</DialogTitle>
               <DialogDescription>
-                {parseResult.okCount} of {parseResult.rows.length} rows are
-                ready to import.
+                {importReadyMessage(
+                  parseResult.okCount,
+                  parseResult.rows.length
+                )}
                 {parseResult.issueCount > 0
-                  ? ` ${parseResult.issueCount} need attention and will be skipped.`
+                  ? ` ${importSkippedMessage(parseResult.issueCount)}`
                   : ""}
               </DialogDescription>
             </DialogHeader>
@@ -273,7 +280,7 @@ export function ImportCredentialsDialog({
                   ? ` ${outcome.failed} could not be saved.`
                   : ""}
                 {parseResult.issueCount > 0
-                  ? ` ${parseResult.issueCount} row(s) need attention.`
+                  ? ` ${importIssuesMessage(parseResult.issueCount)}`
                   : ""}
               </DialogDescription>
             </DialogHeader>
