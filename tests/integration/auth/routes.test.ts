@@ -19,6 +19,7 @@ import {
   hashAuthKey,
   HashBusyError,
 } from "../../../lib/auth/server"
+import { AUTH_SOURCE_UNAVAILABLE } from "../../../lib/auth/shared"
 import { accountBody, authKeyFor } from "./account-body"
 
 const origin = "http://127.0.0.1:3100"
@@ -252,12 +253,15 @@ describe("real MongoDB auth routes", () => {
       ).status,
       403
     )
-    assert.equal((await login(post(email, password, null))).status, 403)
-    assert.equal(
-      (await login(post(email, password, "1.2.3.4, 5.6.7.8"))).status,
-      403
-    )
-    assert.equal((await login(post(email, password, "not-an-ip"))).status, 403)
+    // An unresolvable client IP fails closed with a generic 503.
+    for (const ip of [null, "1.2.3.4, 5.6.7.8", "not-an-ip"]) {
+      const refused = await login(post(email, password, ip))
+      assert.equal(refused.status, 503)
+      assert.deepEqual(await refused.json(), {
+        error: AUTH_SOURCE_UNAVAILABLE,
+      })
+    }
+    assert.equal((await register(post(email, password, null))).status, 503)
     const bad = `${prefix}-bad@example.test`
     for (const body of [
       // A raw password instead of the derived auth key.
