@@ -78,7 +78,8 @@ export function CredentialList({
                 }.`
               : `${credentials.length} saved ${credentials.length === 1 ? "credential" : "credentials"}.`}
         </CardDescription>
-        <CardAction className="flex gap-2">
+        {/* Below the title on phones, where the two buttons don't fit beside it. */}
+        <CardAction className="col-span-2 col-start-1 row-span-1 row-start-3 mt-2 flex flex-wrap gap-2 justify-self-start sm:col-span-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
           <Button
             className="h-9 px-3 text-sm"
             type="button"
@@ -235,7 +236,7 @@ function CredentialRow({
         </Link>
 
         <dl className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-2">
+          <div className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
             <dt className="sr-only">Account label</dt>
             <dd className="truncate text-sm font-semibold">
               {credential.accountName}
