@@ -7,10 +7,12 @@ import {
 import { currentApprovedDevice } from "@/lib/devices/server"
 import {
   createShare,
-  listPendingShares,
+  listIncomingShares,
+  listOutgoingShares,
   RecipientNotFoundError,
   SelfShareError,
 } from "@/lib/sharing/server"
+import { parseShareExpiry, ShareExpiryError } from "@/lib/sharing/status"
 import {
   CredentialValidationError,
   validateCredentialDraft,
@@ -27,7 +29,12 @@ export async function GET(request: Request) {
     if (!user) return json({ error: "Not authenticated" }, 401)
     if (!(await currentApprovedDevice(request, user.id)))
       return json({ error: "Device not approved" }, 403)
-    return json({ shares: await listPendingShares(user.id) })
+    const now = new Date()
+    const [incoming, outgoing] = await Promise.all([
+      listIncomingShares(user.id, now),
+      listOutgoingShares(user.id, now),
+    ])
+    return json({ incoming, outgoing })
   } catch {
     return failure()
   }
@@ -45,12 +52,14 @@ export async function POST(request: Request) {
     if (!body) return json({ error: "Invalid request" }, 400)
 
     const normalized = validateCredentialDraft(body.credential)
+    const expiresAt = parseShareExpiry(body.expiresAt)
 
     const result = await createShare({
       fromUserId: user.id,
       fromEmail: user.email,
       toEmail: body.recipientEmail,
       credential: normalized,
+      expiresAt,
     })
     return json(result, 201)
   } catch (error) {
@@ -58,15 +67,19 @@ export async function POST(request: Request) {
       return json({ error: error.message }, 404)
     if (error instanceof SelfShareError)
       return json({ error: error.message }, 400)
+    if (error instanceof ShareExpiryError)
+      return json({ error: error.message }, 400)
     if (error instanceof CredentialValidationError)
       return json({ error: "Credential information is incomplete." }, 400)
     return failure()
   }
 }
 
-async function readBody(
-  request: Request
-): Promise<{ recipientEmail: string; credential: CredentialDraft } | null> {
+async function readBody(request: Request): Promise<{
+  recipientEmail: string
+  credential: CredentialDraft
+  expiresAt: unknown
+} | null> {
   if (
     !/^application\/json(?:\s*;|\s*$)/i.test(
       request.headers.get("content-type") || ""
@@ -99,7 +112,10 @@ async function readBody(
     const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
       return null
-    const { recipientEmail, credential } = parsed as Record<string, unknown>
+    const { recipientEmail, credential, expiresAt } = parsed as Record<
+      string,
+      unknown
+    >
     if (
       typeof recipientEmail !== "string" ||
       !credential ||
@@ -120,6 +136,7 @@ async function readBody(
     return {
       recipientEmail,
       credential: { accountName, siteOrApp, username, password, notes },
+      expiresAt,
     }
   } catch {
     return null
