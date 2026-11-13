@@ -236,6 +236,61 @@ test("edits a saved credential, cancels safely, and keeps changes after unlockin
   await expect(page.getByLabel("Risk level")).toHaveValue("high")
 })
 
+test("deletes a saved credential after confirming and keeps it deleted after unlocking", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await unlockVault(page)
+
+  const addDialog = page.getByRole("dialog", { name: "Add a credential" })
+  for (const [account, site] of [
+    ["University email", "mail.example.edu"],
+    ["Library account", "library.example.edu"],
+  ]) {
+    // An empty vault opens the add dialog by itself.
+    if (account !== "University email")
+      await page.getByRole("button", { name: "Add credential" }).first().click()
+    await addDialog.getByLabel("Account label").fill(account)
+    await addDialog.getByLabel("Website or app").fill(site)
+    await addDialog.getByLabel("Username").fill("student@example.edu")
+    await addDialog
+      .getByLabel("Password", { exact: true })
+      .fill("DeleteDemo!123456")
+    await addDialog.getByRole("button", { name: "Save credential" }).click()
+    await expect(page.getByText(account, { exact: true })).toBeVisible()
+  }
+
+  const dialog = page.getByRole("dialog", { name: "Edit credential" })
+
+  // Keeping it closes the question and leaves the credential alone.
+  await page.getByRole("button", { name: "Edit Library account" }).click()
+  await dialog.getByRole("button", { name: "Delete credential" }).click()
+  await expect(
+    dialog.getByText("Delete Library account? This can’t be undone.")
+  ).toBeVisible()
+  await dialog.getByRole("button", { name: "Keep it" }).click()
+  await expect(
+    dialog.getByRole("button", { name: "Delete credential" })
+  ).toBeVisible()
+  await dialog.getByRole("button", { name: "Cancel" }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByText("Library account", { exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "Edit Library account" }).click()
+  await dialog.getByRole("button", { name: "Delete credential" }).click()
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByText("Library account", { exact: true })).toBeHidden()
+  await expect(page.getByText("1 saved credential.")).toBeVisible()
+
+  await page.reload()
+  await unlockVault(page)
+  await expect(
+    page.getByText("University email", { exact: true })
+  ).toBeVisible()
+  await expect(page.getByText("Library account", { exact: true })).toBeHidden()
+})
+
 test("searches credentials by account, site, or username and clears accessibly without sending the query", async ({
   page,
 }) => {
