@@ -55,7 +55,23 @@ vault key    --AES-GCM--> encrypts the vault
 
 The PBKDF2 salt is `ung-password-manager:account:v1:` followed by the email, trimmed and lowercased (`lib/auth/shared.ts`). The two HKDF outputs are independent, so the auth key the server sees cannot recover the wrapping key. Registration creates the random vault key in the browser and sends `{ email, authKey, wrappedVaultKey }`; sign-in sends `{ email, authKey }`. The server stores a salted scrypt hash of the auth key and the wrapped vault key, and neither can decrypt the vault. Changing the password only needs the vault key re-wrapped (`rewrapVaultKey`) and the auth key hash replaced, not the vault re-encrypted.
 
+### Changing the password
+
+Settings asks for the current password and the new one twice; the new one follows the registration rules. The browser (`lib/auth/password-change.client.ts`):
+
+1. derives the keys for both passwords and loads the wrapped vault key from `/api/vault`, so only an approved device can change the password;
+2. unwraps the vault key with the current wrapping key (a wrong current password stops here), re-wraps it with the new one, and checks that the new wrapping opens the same key and decrypts the saved vault before sending anything;
+3. sends `{ currentAuthKey, authKey, wrappedVaultKey }` to `POST /api/auth/password`: the sign-in auth key, the registration auth key, and the re-wrapped key. No password or plaintext vault key leaves the browser, and the vault itself is not re-encrypted.
+
+The route requires the exact origin, a live session, and an approved device, and shares the sign-in rate limits (`limited`). It checks the current auth key like sign-in, then replaces the auth key hash, its salt, and the wrapped vault key in one conditional update on the account document (`lib/auth/password-change.server.ts`). The condition is the hash it checked, so two overlapping changes cannot mix one password's hash with the other's wrapped key; the loser gets 409 or 401 and changes nothing.
+
+The same update raises the account's `credentialsVersion`. Every session records the version it signed in with, and `activeSession` rejects sessions from an older version, so all existing sessions, including a sign-in that checked the old password while the change was in progress, stop working in the same write. Old session records are then deleted, and the browser that made the change gets a new session cookie. If that new session cannot be created, the password is still changed and the route returns 503; the browser is signed out and signs in with the new password.
+
+Approved devices stay approved: approval belongs to the browser, not the password, and nothing on a device is wrapped with the password. Their sessions are signed out, so they need the new password to sign in again. Pending credential shares are encrypted with the server's sharing key and are not affected.
+
 After sign-in the browser keeps the wrapping key in memory until this device is approved and the vault opens, then drops it. Locking the vault or reloading the page asks for the same password again.
+
+The vault also locks itself after a stretch without activity: 15 minutes by default, or 1, 5, 30 or 60 minutes as chosen in Settings. The choice is stored per browser in `localStorage`. A warning appears shortly before locking (a minute ahead, or a quarter of the timeout if that is shorter) and offers to stay unlocked. Tabs of the same account share activity and locks over a `BroadcastChannel` (`lib/vault/auto-lock.ts`, `components/vault/auto-lock.tsx`), so activity in any tab keeps the vault open and locking one tab locks them all.
 
 ## Account vault storage
 
@@ -72,6 +88,14 @@ Each browser is identified by a long-lived, HttpOnly device cookie and registere
 `/api/vault` and `/api/vault/revision` return 403 to unapproved devices. An open vault polls the revision every 15 seconds and when the tab regains focus. When another device has saved a newer revision, the browser fetches it and decrypts it with the vault key held by the unlocked session, and a save built on the replaced data is rejected as a conflict instead of overwriting it.
 
 `/api/devices` lists the account's approved devices and `/api/devices/[id]` removes one after the user confirms on the Settings page. A removed device loses vault access immediately and returns to the approval screen. The current device cannot remove itself.
+
+## Sharing a credential
+
+A credential can be shared with another account by email (`/api/shares`). Sharing is not end-to-end encrypted: the server encrypts the credential at rest with `SHARE_ENCRYPTION_KEY` (`lib/sharing/server.ts`).
+
+The recipient does not get a copy. Each time they open a shared credential, `GET /api/shares/[id]` decrypts it for them, and only while the share is active. An owner can give a share an end date (1 hour, 1 day, 7 days, 30 days or a chosen date, up to a year) and can remove access at any time. Once a share expires or is removed the route answers 410 with its status and no credential, and the encrypted credential is deleted from the record. The account label and site stay, encrypted separately, so both people still see which share ended. The rules live in `lib/sharing/status.ts`.
+
+`GET /api/shares` lists `incoming` and `outgoing` shares with their status (`active`, `expired` or `removed`) and never includes a credential. `DELETE /api/shares/[id]` lets the owner revoke a share or the recipient decline it, and either one clear an ended share from their own list; the record is deleted once both have. Shares saved before end dates existed read as active with no end date. A password the recipient already copied cannot be taken back, so the owner is reminded to change it.
 
 ## Chrome extension
 
