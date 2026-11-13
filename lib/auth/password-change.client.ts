@@ -13,7 +13,10 @@ import {
   PASSWORD_CHANGE_WRONG_PASSWORD,
   PASSWORD_CHANGED_SIGNED_OUT,
 } from "@/lib/auth/password-change"
-import { accountPasswordProblem } from "@/lib/auth/shared"
+import {
+  accountPasswordProblem,
+  AUTH_SOURCE_UNAVAILABLE,
+} from "@/lib/auth/shared"
 import { DeviceNotApprovedError } from "@/lib/devices/shared"
 import {
   decryptVault,
@@ -192,6 +195,11 @@ function failureMessage(caught: unknown): PasswordChangeError {
         if (caught.message === PASSWORD_CHANGED_SIGNED_OUT)
           return new PasswordChangeError(
             PASSWORD_CHANGE_MESSAGES.changedSignedOut
+          )
+        // The sign-in wording would be wrong here; the password is unchanged.
+        if (caught.message === AUTH_SOURCE_UNAVAILABLE)
+          return new PasswordChangeError(
+            ACCOUNT_ERROR_MESSAGES.request.serverUnavailable
           )
     }
   }

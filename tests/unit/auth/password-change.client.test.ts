@@ -236,6 +236,11 @@ describe("changing the password through the server", () => {
         "The server is unavailable right now. Try again in a few moments.",
       ],
       [
+        503,
+        { error: "Sign-in is temporarily unavailable." },
+        "The server is unavailable right now. Try again in a few moments.",
+      ],
+      [
         429,
         { error: "Too many attempts" },
         "Too many attempts. Wait 2 minutes before trying again.",

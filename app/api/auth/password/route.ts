@@ -6,6 +6,7 @@ import {
   limited,
   originAllowed,
   readToken,
+  sourceUnavailable,
   throttled,
 } from "@/lib/auth/server"
 import {
@@ -33,8 +34,7 @@ export async function POST(request: Request) {
     if (!input) return json({ error: "Invalid password change" }, 400)
     // Shares the sign-in budget, so this cannot be used to guess passwords faster.
     const limit = await limited(request, active.user.email)
-    if (limit && "invalidSource" in limit)
-      return json({ error: "Forbidden" }, 403)
+    if (limit && "invalidSource" in limit) return sourceUnavailable()
     if (limit && "retryAfter" in limit) return throttled(limit.retryAfter)
     const result = await changeAccountPassword(userId, input)
     switch (result.outcome) {
