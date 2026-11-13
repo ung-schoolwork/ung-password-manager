@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
 import {
-  importIssuesMessage,
   importReadyMessage,
   importSkippedMessage,
 } from "../../../lib/vault/import-messages"
@@ -20,7 +19,5 @@ describe("import messages", () => {
     expect(importSkippedMessage(2)).toBe(
       "2 need attention and will be skipped."
     )
-    expect(importIssuesMessage(1)).toBe("1 row needs attention.")
-    expect(importIssuesMessage(3)).toBe("3 rows need attention.")
   })
 })

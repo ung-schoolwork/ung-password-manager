@@ -11,9 +11,3 @@ export function importSkippedMessage(issueCount: number) {
     ? "1 needs attention and will be skipped."
     : `${issueCount} need attention and will be skipped.`
 }
-
-export function importIssuesMessage(issueCount: number) {
-  return issueCount === 1
-    ? "1 row needs attention."
-    : `${issueCount} rows need attention.`
-}

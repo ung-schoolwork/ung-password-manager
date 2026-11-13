@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { CredentialForm } from "@/components/vault/credential-form"
+import { DeleteCredentialSection } from "@/components/vault/delete-credential-section"
 import type { Credential } from "@/lib/vault/types"
 
 export interface EditCredentialDialogProps {
@@ -42,6 +43,11 @@ export function EditCredentialDialog({
           credential={credential}
           onCancel={() => onOpenChange(false)}
           onSaved={() => onOpenChange(false)}
+        />
+        <DeleteCredentialSection
+          key={`delete-${credential.id}`}
+          credential={credential}
+          onDeleted={() => onOpenChange(false)}
         />
       </DialogContent>
     </Dialog>
