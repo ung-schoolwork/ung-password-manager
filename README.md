@@ -99,7 +99,23 @@ The recipient does not get a copy. Each time they open a shared credential, `GET
 
 ## Chrome extension
 
-`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. The popup signs in, shows the device approval code, and opens the vault: it lists the logins saved for the website in the current tab, searches all of them, and fills the one the user chooses into the page. It is bundled with `Bun.build`; there is no separate package or framework.
+`extension/` holds a Manifest V3 Chrome extension with a toolbar popup and a background service worker. The popup signs in, shows the device approval code, and opens the vault: it lists the logins saved for the website in the current tab, searches all of them, fills the one the user chooses into the page, and saves a new login, offering what the user typed into the page's form. It is bundled with `Bun.build`; there is no separate package or framework.
+
+### Installing the extension in Chrome
+
+The extension is not in the Chrome Web Store, so Chrome loads it from a folder. There is no packed `.crx` or zip: a `.crx` must be signed with the private key, which is not in the repository, and Chrome cannot load a zip directly.
+
+1. Start the app (see [Development](#development)) and add this line to `.env.local` before starting it, so the server accepts the extension:
+   `EXTENSION_ORIGINS=chrome-extension://ibfocpogcdoolfmhcmnkiojgfpbkfbgj`
+2. Build the extension for the address you open the app at. The default is `http://localhost:3000`; use the same host name you type in the address bar (`localhost` and `127.0.0.1` are different sites to Chrome):
+   `bun run build:extension`, or `EXTENSION_APP_ORIGIN=https://your-app.example.com bun run build:extension`
+3. In Chrome, open `chrome://extensions` and turn on **Developer mode** (top right).
+4. Choose **Load unpacked** and select the `extension/dist` folder.
+5. Click the puzzle-piece icon in the toolbar and pin **UNG Password Manager**, then click it to sign in.
+
+To share the extension, copy or zip the `extension/dist` folder; the person receiving it unzips it and follows steps 3 to 5. After rebuilding, press the reload button on the extension's card in `chrome://extensions`. If the popup says it can't reach UNG Password Manager, check that the app is running at the address the extension was built for and that `EXTENSION_ORIGINS` is set.
+
+### Building and how it works
 
 ```bash
 bun run build:extension                                         # app at http://localhost:3000
@@ -130,11 +146,11 @@ Entries that are not exactly `chrome-extension://` followed by a 32-letter ID ar
 - Open vault: every 5 seconds the popup re-checks the session and `/api/vault/revision`. A 401 or a different account shows sign-in or unlock again, a 403 (this browser was removed in Settings) shows a new approval code, and a new revision is downloaded and decrypted.
 - Sign-out in the popup calls `/api/auth/logout`, which signs out the app as well; the app notices on focus or within 30 seconds. Sign-out in the app is noticed by the open popup within 5 seconds, or when it next opens.
 
-The wrapping key, the vault key, and the decrypted list live only in the popup's memory. The service worker relays requests and only handles the auth key and ciphertext; it keeps nothing between messages. Nothing is written to `chrome.storage`, and the manifest requests only `activeTab` and `scripting` besides host access to the app. Closing the popup, locking, signing out, a 401, or a 403 drops the keys and the list, and opening the popup again asks for the password. The popup keeps only the account name, website, and username of each login, plus the encrypted vault; passwords are decrypted with the rest of the vault but not kept.
+The wrapping key, the vault key, the decrypted list, and a login being saved live only in the popup's memory. The service worker relays requests and only handles the auth key and ciphertext; it keeps nothing between messages. Nothing is written to `chrome.storage` (the extension does not request the `storage` permission, so the API is not even available to it), and the manifest requests only `activeTab` and `scripting` besides host access to the app. Closing the popup, locking, signing out, a 401, or a 403 drops the keys and the list, and opening the popup again asks for the password. The popup keeps only the account name, website, and username of each login, plus the encrypted vault; passwords are decrypted with the rest of the vault but not kept.
 
 **Logins for the current website.** Clicking the toolbar button grants `activeTab`, so the popup can read the current tab's address once when it opens; it is not stored. `lib/vault/site-match.ts` compares hosts: a credential's website is free text, read with or without a scheme or path, ignoring `www.` and any port. A tab matches when its host equals the saved host or is a subdomain of it, so a login for `example.com` shows on `accounts.example.com`, but a login for `accounts.example.com` does not show on `example.com`, and `evil-example.com` never matches `example.com`. A saved single label (`com`, `localhost`) or IP address matches only itself. There is no public-suffix list, so a login saved for `co.uk` would match every `co.uk` site. Pages that are not `http` or `https` (`chrome://`, `file:`) get no suggestions. The search box uses `lib/vault/search.ts`, as the app does, over account name, website, and username.
 
-**Filling a login.** Nothing runs on websites until the user chooses a login in the popup; there is no content script. Then the popup:
+**Filling a login.** Nothing runs on websites until the user chooses a login, or starts saving one, in the popup; there is no content script. Then the popup:
 
 1. Reads the active tab again and checks it with `fillProblem` (`lib/vault/site-match.ts`): the page must be HTTPS, or http on `localhost`, `127.0.0.1`, or `[::1]`, and its host must match the login's website by the rules above. Otherwise it says why and fills nothing.
 2. Decrypts the vault with the vault key it holds and keeps only the chosen login's username and password for this one fill. The vault is encrypted as a whole, so it cannot decrypt a single entry.
@@ -143,6 +159,8 @@ The wrapping key, the vault key, and the decrypted list live only in the popup's
 `fill-page.js` checks the page's address again, so a tab that moved on in the meantime is not filled. It then picks fields with `pickLoginFields` (`extension/src/fill-fields.ts`). Only visible, editable inputs count: hidden, transparent, zero-sized, and off-page fields are skipped. A `current-password` field is preferred, and `new-password` fields (sign-up, password change) are never filled. The username is the field marked `username`/`email` or the text field just before the password. With no password on the page (the first step of a two-step sign-in), only a field marked as an email or username is filled; with no username shown (the second step), only the password. Values are set through the native setter, followed by `input` and `change` events, so framework-managed forms notice. For two steps the popup says to open it again on the next step, which asks for the password again because closing the popup forgets the vault.
 
 The e2e test opens the real toolbar popup with `chrome.action.openPopup()` and reaches it over the DevTools protocol. That does not grant `activeTab`, so the test's "current website" is the app's own origin, which the extension's host permission lets it read and fill; subdomain rules and the HTTPS check are covered by unit tests. The fill tests serve sign-in pages on that origin with `context.route`. They include hidden and off-page trap fields, an embedded frame, and a two-step form.
+
+**Saving a login.** **Save a login** in the open vault reads the current tab once, as filling does, and only in its top frame: `fill-page.js` also defines a reader that picks the page's fields with `pickLoginFields` in its saving mode, which prefers a `new-password` field (sign-up or password change) over the current one. The form is filled with what the user typed there, and the label and website default to the tab's host; when the page has no sign-in fields, or is not a website, the form starts empty. The popup validates the login with `validateCredentialDraft` from `lib/vault/validation.ts`, the same rules as the app, decrypts the vault with the vault key, adds the login, encrypts the whole vault again, and sends only the envelope and the revision it started from (`save-vault`) through the service worker to `PUT /api/vault`. If another device saved first, the server answers 409 without overwriting; the popup loads the newer vault and adds the login to it, up to three times. The typed login lives only in the popup's form until it is encrypted and is cleared when the form closes. Nothing is captured when a form is submitted: that would need a content script on every site, which the extension avoids.
 
 **Shared vault encryption.** `extension/src/vault.ts` re-exports `lib/vault/crypto.client.ts`; the bundler compiles the same module into the extension, so encryption is never copied. A unit test bundles it for the browser and round-trips a vault through it.
 

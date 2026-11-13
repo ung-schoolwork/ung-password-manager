@@ -80,8 +80,12 @@
           <button id="lock" class="secondary" type="button">Lock</button>
         </div>
         <p id="vault-account"></p>
+        <button id="start-save" class="secondary" type="button">
+          Save a login
+        </button>
         <p id="vault-empty" hidden>
-          Nothing saved yet. Add logins in UNG Password Manager.
+          No logins saved yet. Save one for this website, or add logins in UNG
+          Password Manager.
         </p>
         <div id="vault-content" class="stack">
           <label for="vault-search">Search your vault</label>
@@ -118,6 +122,72 @@
           </button>
           <button class="secondary sign-out" type="button">Sign out</button>
         </div>
+      </section>
+
+      <section id="save-view" aria-labelledby="save-heading" hidden>
+        <h2 id="save-heading">Save a login</h2>
+        <p id="save-hint"></p>
+        <form id="save-form" novalidate>
+          <label for="save-account-name">Account label</label>
+          <input
+            id="save-account-name"
+            name="accountName"
+            type="text"
+            autocomplete="off"
+            aria-describedby="save-account-name-error"
+            required
+          />
+          <p id="save-account-name-error" class="error" hidden></p>
+          <label for="save-site">Website or app</label>
+          <input
+            id="save-site"
+            name="siteOrApp"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="save-site-error"
+            required
+          />
+          <p id="save-site-error" class="error" hidden></p>
+          <label for="save-username">Username</label>
+          <input
+            id="save-username"
+            name="username"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="save-username-error"
+            required
+          />
+          <p id="save-username-error" class="error" hidden></p>
+          <label for="save-password">Password</label>
+          <div class="row">
+            <input
+              id="save-password"
+              name="password"
+              type="password"
+              autocomplete="off"
+              aria-describedby="save-password-error"
+              required
+            />
+            <button
+              id="save-show-password"
+              class="secondary"
+              type="button"
+              aria-pressed="false"
+            >
+              Show
+            </button>
+          </div>
+          <p id="save-password-error" class="error" hidden></p>
+          <p id="save-error" class="error" role="alert" hidden></p>
+          <div class="row">
+            <button id="save-submit" type="submit">Save login</button>
+            <button id="save-cancel" class="secondary" type="button">
+              Cancel
+            </button>
+          </div>
+        </form>
       </section>
 
       <section id="unavailable-view" hidden>

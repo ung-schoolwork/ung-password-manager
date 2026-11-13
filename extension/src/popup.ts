@@ -2,7 +2,7 @@ import { formatDeviceCode } from "@/lib/devices/shared"
 
 import type { ExtensionRequest } from "./api"
 import { APP_ORIGIN } from "./config"
-import type { FillOutcome } from "./fill-page"
+import type { FillOutcome, PageLogin } from "./fill-page"
 import {
   PopupController,
   type PopupView,
@@ -22,6 +22,7 @@ const views = {
   unlock: element("unlock-view"),
   approval: element("approval-view"),
   vault: element("vault-view"),
+  save: element("save-view"),
   unavailable: element("unavailable-view"),
 } satisfies Record<PopupView["name"], HTMLElement>
 
@@ -48,6 +49,25 @@ const searchResults = element("search-results")
 const resultEntries = element("result-entries")
 const resultsEmpty = element("results-empty")
 const fillStatus = element("fill-status")
+const startSave = element<HTMLButtonElement>("start-save")
+const saveForm = element<HTMLFormElement>("save-form")
+const saveHint = element("save-hint")
+const saveFields = {
+  accountName: element<HTMLInputElement>("save-account-name"),
+  siteOrApp: element<HTMLInputElement>("save-site"),
+  username: element<HTMLInputElement>("save-username"),
+  password: element<HTMLInputElement>("save-password"),
+}
+const saveFieldErrors = {
+  accountName: element("save-account-name-error"),
+  siteOrApp: element("save-site-error"),
+  username: element("save-username-error"),
+  password: element("save-password-error"),
+}
+const saveShowPassword = element<HTMLButtonElement>("save-show-password")
+const saveSubmit = element<HTMLButtonElement>("save-submit")
+const saveCancel = element<HTMLButtonElement>("save-cancel")
+const saveError = element("save-error")
 
 const send: Send = async (request: ExtensionRequest) => {
   try {
@@ -110,6 +130,56 @@ function clearVault() {
   fillStatus.textContent = ""
 }
 
+/** Removes a login that was being saved from the page. */
+function clearSave() {
+  for (const input of Object.values(saveFields)) input.value = ""
+  showPassword(false)
+}
+
+function showPassword(show: boolean) {
+  saveFields.password.type = show ? "text" : "password"
+  saveShowPassword.textContent = show ? "Hide" : "Show"
+  saveShowPassword.setAttribute("aria-pressed", String(show))
+  saveShowPassword.setAttribute(
+    "aria-label",
+    show ? "Hide password" : "Show password"
+  )
+}
+
+function renderSave(view: Extract<PopupView, { name: "save" }>) {
+  const opening = shown !== "save"
+  if (opening) {
+    for (const [field, input] of Object.entries(saveFields))
+      input.value = view.draft[field as keyof typeof saveFields]
+    showPassword(false)
+    saveHint.textContent =
+      view.draft.username || view.draft.password
+        ? "Filled in from this page. Check the details, then save."
+        : ""
+    saveHint.hidden = !saveHint.textContent
+  }
+  for (const [field, target] of Object.entries(saveFieldErrors)) {
+    const message = view.errors[field as keyof typeof saveFieldErrors] ?? null
+    showError(target, message)
+    saveFields[field as keyof typeof saveFields].setAttribute(
+      "aria-invalid",
+      String(Boolean(message))
+    )
+  }
+  showError(saveError, view.error)
+  for (const input of Object.values(saveFields)) input.disabled = view.busy
+  saveSubmit.disabled = saveCancel.disabled = view.busy
+  saveSubmit.textContent = view.busy ? "Saving…" : "Save login"
+  if (opening) {
+    const first = Object.values(saveFields).find((input) => !input.value)
+    ;(first ?? saveFields.accountName).focus()
+  } else if (!view.busy) {
+    const invalid = Object.keys(view.errors)[0] as
+      keyof typeof saveFields | undefined
+    if (invalid) saveFields[invalid].focus()
+  }
+}
+
 function renderVault(view: Extract<PopupView, { name: "vault" }>) {
   vaultAccount.textContent = `Signed in as ${view.email}`
   vaultEmpty.hidden = view.total > 0
@@ -141,8 +211,10 @@ function renderVault(view: Extract<PopupView, { name: "vault" }>) {
 function render(view: PopupView) {
   for (const [name, section] of Object.entries(views))
     section.hidden = name !== view.name
-  // Decrypted logins stay in the page only while the vault is shown.
-  if (view.name !== "vault") clearVault()
+  // Decrypted logins stay in the page only while the vault is shown, and a
+  // login being saved only while its form is.
+  if (view.name !== "vault" && view.name !== "save") clearVault()
+  if (view.name !== "save") clearSave()
 
   switch (view.name) {
     case "sign-in":
@@ -171,7 +243,11 @@ function render(view: PopupView) {
       break
     case "vault":
       renderVault(view)
-      if (shown !== "vault" && view.total > 0) vaultSearch.focus()
+      if (shown === "save") startSave.focus()
+      else if (shown !== "vault" && view.total > 0) vaultSearch.focus()
+      break
+    case "save":
+      renderSave(view)
       break
   }
   shown = view.name
@@ -238,12 +314,41 @@ async function fillPage(
   }
 }
 
+/**
+ * Reads what the user typed into the tab's sign-in form, to offer it for
+ * saving. Like filling, this injects into the top frame only when asked.
+ */
+async function readPage(tabId: number): Promise<PageLogin | null> {
+  const target = { tabId, frameIds: [0] }
+  try {
+    await chrome.scripting.executeScript({ target, files: ["fill-page.js"] })
+    const [injection] = await chrome.scripting.executeScript({
+      target,
+      func: () =>
+        (
+          globalThis as { ungPasswordManagerRead?: () => unknown }
+        ).ungPasswordManagerRead?.() ?? null,
+    })
+    const result = injection?.result as Record<string, unknown> | null
+    if (result?.refused === true) return { refused: true }
+    if (
+      typeof result?.username === "string" &&
+      typeof result.password === "string"
+    )
+      return { username: result.username, password: result.password }
+    return null
+  } catch {
+    return null
+  }
+}
+
 const controller = new PopupController({
   send,
   render,
   tabUrl: await currentTabUrl(),
   currentTab,
   fillPage,
+  readPage,
 })
 
 for (const list of [siteEntries, resultEntries])
@@ -253,6 +358,21 @@ for (const list of [siteEntries, resultEntries])
     )
     if (button?.dataset.id) void controller.fill(button.dataset.id)
   })
+
+startSave.addEventListener("click", () => void controller.startSave())
+saveCancel.addEventListener("click", () => controller.cancelSave())
+saveShowPassword.addEventListener("click", () =>
+  showPassword(saveFields.password.type === "password")
+)
+saveForm.addEventListener("submit", (event) => {
+  event.preventDefault()
+  void controller.saveLogin({
+    accountName: saveFields.accountName.value,
+    siteOrApp: saveFields.siteOrApp.value,
+    username: saveFields.username.value,
+    password: saveFields.password.value,
+  })
+})
 
 vaultSearch.addEventListener("input", () =>
   controller.search(vaultSearch.value)
@@ -296,6 +416,7 @@ element("open-vault").addEventListener("click", () => openApp("/vault"))
 window.addEventListener("pagehide", () => {
   controller.dispose()
   clearVault()
+  clearSave()
 })
 
 void controller.start()

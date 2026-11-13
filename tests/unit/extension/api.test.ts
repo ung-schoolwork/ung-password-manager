@@ -6,6 +6,7 @@ import {
   fetchVault,
   handleRequest,
   isExtensionRequest,
+  saveVault,
   signIn,
   signOut,
 } from "../../../extension/src/api"
@@ -210,5 +211,75 @@ describe("extension device and vault access", () => {
       )
       expect(seen.map((request) => request.url)).toEqual([`${origin}${path}`])
     }
+  })
+})
+
+describe("extension vault saves", () => {
+  it("accepts only a well-formed encrypted vault to save", () => {
+    expect(
+      isExtensionRequest({
+        type: "save-vault",
+        envelope,
+        expectedRevision: revision,
+      })
+    ).toBe(true)
+    expect(
+      isExtensionRequest({
+        type: "save-vault",
+        envelope,
+        expectedRevision: null,
+      })
+    ).toBe(true)
+    for (const value of [
+      { type: "save-vault", envelope },
+      { type: "save-vault", envelope, expectedRevision: "1" },
+      {
+        type: "save-vault",
+        envelope: { ...envelope, ciphertext: "not base64!" },
+        expectedRevision: revision,
+      },
+      {
+        type: "save-vault",
+        envelope: { credentials: [{ password: "plain" }] },
+        expectedRevision: revision,
+      },
+    ])
+      expect(isExtensionRequest(value)).toBe(false)
+  })
+
+  it("puts only the envelope and revision, and reports conflicts", async () => {
+    const seen: Seen[] = []
+    const next = "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"
+    expect(
+      await saveVault(
+        origin,
+        { envelope: envelope as never, expectedRevision: revision },
+        server(200, { revision: next }, seen)
+      )
+    ).toEqual({ state: "saved", revision: next })
+    expect(seen[0].url).toBe(`${origin}/api/vault`)
+    expect(seen[0].init?.method).toBe("PUT")
+    expect(seen[0].init?.credentials).toBe("include")
+    expect(JSON.parse(String(seen[0].init?.body))).toEqual({
+      envelope,
+      expectedRevision: revision,
+    })
+
+    const write = { envelope: envelope as never, expectedRevision: revision }
+    expect(await saveVault(origin, write, server(409))).toEqual({
+      state: "conflict",
+    })
+    expect(await saveVault(origin, write, server(401))).toEqual({
+      state: "signed-out",
+    })
+    expect(await saveVault(origin, write, server(403))).toEqual({
+      state: "not-approved",
+    })
+    expect(await saveVault(origin, write, server(503))).toEqual({
+      state: "unavailable",
+    })
+    expect(await saveVault(origin, write, server(200, {}))).toEqual({
+      state: "unavailable",
+    })
   })
 })
