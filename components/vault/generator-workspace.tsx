@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Check, Copy } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -11,22 +11,50 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { PasswordGeneratorPanel } from "@/components/vault/password-generator-panel"
-import { copyWithAutoClear } from "@/lib/vault/clipboard"
+import {
+  PasswordGeneratorPanel,
+  type GeneratedKind,
+} from "@/components/vault/password-generator-panel"
+import { copyWithAutoClear, onClipboardClear } from "@/lib/vault/clipboard"
+import { clipboardClearMessage } from "@/lib/vault/clipboard-messages"
 
 export function GeneratorWorkspace() {
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState<string | null>(null)
+  const [clearNotice, setClearNotice] = useState<string | null>(null)
+  // The last copy made here, so a clear message only shows for a copy of ours.
+  const lastCopyIdRef = useRef<number | null>(null)
+  // What that copy was, so the clear message names it.
+  const lastCopyKindRef = useRef<GeneratedKind>("password")
 
-  async function copyPassword(password: string) {
+  useEffect(
+    () =>
+      onClipboardClear((copyId, result) => {
+        if (lastCopyIdRef.current !== copyId) return
+        lastCopyIdRef.current = null
+        setClearNotice(
+          clipboardClearMessage(
+            lastCopyKindRef.current === "passphrase"
+              ? "Passphrase"
+              : "Password",
+            result
+          )
+        )
+      }),
+    []
+  )
+
+  async function copyPassword(password: string, kind: GeneratedKind) {
     setCopyError(null)
+    setClearNotice(null)
+    lastCopyKindRef.current = kind
 
     try {
-      await copyWithAutoClear(password)
+      lastCopyIdRef.current = await copyWithAutoClear(password)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
-      setCopyError("Your browser blocked copying. Select the password instead.")
+      setCopyError(`Your browser blocked copying. Select the ${kind} instead.`)
     }
   }
 
@@ -36,33 +64,33 @@ export function GeneratorWorkspace() {
         <CardHeader>
           <CardTitle className="text-lg">Password generator</CardTitle>
           <CardDescription className="text-sm">
-            Adjust the length and character types to see a new password straight
-            away.
+            Choose a password or a passphrase of random words, then adjust the
+            options to see a new one straight away.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <PasswordGeneratorPanel
-            renderActions={(password) => (
+            renderActions={(password, kind) => (
               <div className="space-y-2">
                 <Button
                   className="h-10 w-full text-sm"
                   type="button"
                   variant="secondary"
                   disabled={!password}
-                  onClick={() => void copyPassword(password)}
+                  onClick={() => void copyPassword(password, kind)}
                 >
                   {copied ? (
                     <Check className="size-4" aria-hidden="true" />
                   ) : (
                     <Copy className="size-4" aria-hidden="true" />
                   )}
-                  {copied ? "Copied" : "Copy password"}
+                  {copied ? "Copied" : `Copy ${kind}`}
                 </Button>
                 <p
                   className="min-h-4 text-xs text-muted-foreground"
                   aria-live="polite"
                 >
-                  {copyError}
+                  {copyError ?? clearNotice}
                 </p>
               </div>
             )}

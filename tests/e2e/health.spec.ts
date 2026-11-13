@@ -382,3 +382,40 @@ test("asks for a saved account before a risk level can be assigned", async ({
     page.getByRole("button", { name: "Save risk level" })
   ).toBeDisabled()
 })
+
+test("saves a generated passphrase without health warnings", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await unlockVault(page)
+
+  await page.getByLabel("Account label").fill("Library account")
+  await page.getByLabel("Website or app").fill("library.example.edu")
+  await page
+    .getByRole("textbox", { name: "Username" })
+    .fill("student@example.edu")
+
+  await page.getByRole("radio", { name: "Passphrase" }).click()
+  const preview = page.getByLabel("Generated passphrase preview")
+  await expect(preview).toHaveText(/^[a-z-]+(-[a-z-]+){4,}$/)
+
+  await page.getByRole("slider", { name: "Words" }).fill("4")
+  await page.getByLabel("Separator").selectOption({ label: "None" })
+  await page.getByRole("checkbox", { name: "Capitalize words" }).check()
+  await page.getByRole("checkbox", { name: "Include a number" }).check()
+  await expect(preview).toHaveText(/^([A-Z][a-z-]*\d?){4}$/)
+  await expect(preview).toHaveText(/^[^\d]*\d[^\d]*$/)
+
+  await page.getByRole("button", { name: "Use this passphrase" }).click()
+  const passphrase = await preview.textContent()
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    passphrase ?? ""
+  )
+  await page.getByRole("button", { name: "Save credential" }).click()
+
+  await expect(
+    page.getByRole("link", {
+      name: "Password health for Library account: Healthy; no warnings",
+    })
+  ).toBeVisible()
+})

@@ -5,7 +5,10 @@ import {
   validateAccountFields,
   vaultUnlockFailureMessage,
 } from "../../../lib/auth/feedback"
-import { ACCOUNT_CREATED_SIGN_IN_FAILED } from "../../../lib/auth/shared"
+import {
+  ACCOUNT_CREATED_SIGN_IN_FAILED,
+  AUTH_SOURCE_UNAVAILABLE,
+} from "../../../lib/auth/shared"
 import { VaultUnlockError } from "../../../lib/vault/crypto.client"
 
 describe("account form feedback", () => {
@@ -181,6 +184,23 @@ describe("account form feedback", () => {
         "login"
       )
     ).toBe("The server is unavailable right now. Try again in a few moments.")
+  })
+})
+
+describe("unavailable sign-in feedback", () => {
+  it("says sign-in or registration is temporarily unavailable", () => {
+    expect(
+      accountFailureMessage(
+        new AccountRequestError(AUTH_SOURCE_UNAVAILABLE, 503),
+        "login"
+      )
+    ).toBe("Sign-in is temporarily unavailable. Try again later.")
+    expect(
+      accountFailureMessage(
+        new AccountRequestError(AUTH_SOURCE_UNAVAILABLE, 503),
+        "register"
+      )
+    ).toBe("Creating an account is temporarily unavailable. Try again later.")
   })
 })
 

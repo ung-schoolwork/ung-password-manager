@@ -271,7 +271,7 @@ export function CredentialForm({
         </CollapsibleTrigger>
         <CollapsibleContent keepMounted className="px-4 pb-4">
           <PasswordGeneratorPanel
-            renderActions={(password) => (
+            renderActions={(password, kind) => (
               <Button
                 className="h-10 w-full text-sm"
                 type="button"
@@ -280,7 +280,7 @@ export function CredentialForm({
                 onClick={() => applyGeneratedPassword(password)}
               >
                 <WandSparkles className="size-4" aria-hidden="true" />
-                Use this password
+                Use this {kind}
               </Button>
             )}
           />
