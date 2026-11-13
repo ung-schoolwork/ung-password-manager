@@ -25,6 +25,10 @@ import {
   type ImportSaveResult,
 } from "@/lib/vault/import-report"
 import type { CredentialDraft } from "@/lib/vault/types"
+import {
+  importReadyMessage,
+  importSkippedMessage,
+} from "@/lib/vault/import-messages"
 
 type ImportStep = "select" | "reading" | "preview" | "importing" | "result"
 
@@ -228,10 +232,9 @@ export function ImportCredentialsDialog({
             <DialogHeader>
               <DialogTitle>Review before importing</DialogTitle>
               <DialogDescription>
-                {readyRows.length} of {parseResult.rows.length} rows are ready
-                to import.
+                {importReadyMessage(readyRows.length, parseResult.rows.length)}
                 {problemRows.length > 0
-                  ? ` ${problemRows.length} need attention and will be skipped.`
+                  ? ` ${importSkippedMessage(problemRows.length)}`
                   : ""}
               </DialogDescription>
             </DialogHeader>

@@ -50,9 +50,9 @@ export function VaultGate() {
               Approve this device
             </h1>
             <CardDescription className="text-sm">
-              Open your account menu on a device you already use, choose “Add a
-              device”, and enter this code. A new code appears here
-              automatically if this one expires.
+              On a device you already use, open Settings, find “Add a device”,
+              and enter this code. A new code appears here automatically if this
+              one expires.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

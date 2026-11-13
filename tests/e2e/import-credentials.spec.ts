@@ -113,7 +113,7 @@ test("importing an .xlsx file shows a review first, then lists each row as impor
   await expect(review).toBeVisible()
   await expect(
     review.getByText(
-      "2 of 3 rows are ready to import. 1 need attention and will be skipped."
+      "2 of 3 rows are ready to import. 1 needs attention and will be skipped."
     )
   ).toBeVisible()
   const ready = review.getByRole("region", { name: "Ready to import" })
