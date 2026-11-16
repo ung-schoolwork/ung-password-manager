@@ -89,6 +89,8 @@ let server: {
   /** Revisions saved by other devices before the next save arrives. */
   racingSaves: number
   vaultDownloads: number
+  /** The app refuses requests from this extension's origin. */
+  refusesExtension: boolean
   requests: ExtensionRequest["type"][]
 }
 
@@ -102,6 +104,7 @@ beforeEach(() => {
     envelope,
     racingSaves: 0,
     vaultDownloads: 0,
+    refusesExtension: false,
     requests: [],
   }
 })
@@ -115,6 +118,7 @@ const send = (async (request: ExtensionRequest) => {
           ? { state: "signed-in", userId: server.userId, email }
           : { state: "signed-out" }
       case "sign-in":
+        if (server.refusesExtension) return { state: "blocked" }
         if (request.authKey !== authKey) return { state: "rejected" }
         server.signedIn = true
         return { state: "signed-in", userId: server.userId, email }
@@ -122,6 +126,7 @@ const send = (async (request: ExtensionRequest) => {
         server.signedIn = false
         return { state: "signed-out" }
       case "device":
+        if (server.refusesExtension) return { state: "blocked" }
         if (!server.signedIn) return { state: "signed-out" }
         return server.approved
           ? { state: "approved" }
@@ -147,6 +152,7 @@ const send = (async (request: ExtensionRequest) => {
         if (!server.approved) return { state: "not-approved" }
         return { state: "ok", revision: server.revision }
       case "save-vault":
+        if (server.refusesExtension) return { state: "blocked" }
         if (!server.signedIn) return { state: "signed-out" }
         if (!server.approved) return { state: "not-approved" }
         if (server.racingSaves > 0) {
@@ -293,6 +299,37 @@ describe("popup sign-in", () => {
       total: 0,
       notice: null,
     })
+    controller.dispose()
+  })
+})
+
+describe("popup connection problems", () => {
+  it("says when the app can't be reached", async () => {
+    const { controller } = popup(undefined, {
+      send: (async () => ({ state: "unavailable" })) as Send,
+    })
+    await controller.start()
+    expect(controller.current).toEqual({ name: "unavailable" })
+  })
+
+  it("says when the app refuses this extension instead of calling it unreachable", async () => {
+    server.refusesExtension = true
+    const { controller } = popup()
+    await controller.start()
+    expect(controller.current.name).toBe("sign-in")
+    await controller.signIn(email, password)
+    expect(controller.current).toEqual({ name: "blocked" })
+
+    // Already signed in from the app: registering the device is refused.
+    server.signedIn = true
+    await controller.start()
+    expect(controller.current).toEqual({ name: "blocked" })
+
+    // Trying again once the app allows the extension carries on as usual.
+    server.refusesExtension = false
+    server.approved = true
+    await controller.start()
+    expect(controller.current).toMatchObject({ name: "unlock", email })
     controller.dispose()
   })
 })
@@ -753,6 +790,27 @@ describe("popup save", () => {
       draft,
       error:
         "Your vault is changing on another device. Wait a moment, then save again.",
+      busy: false,
+    })
+    controller.dispose()
+  })
+
+  it("keeps the login on the form when the app refuses this extension", async () => {
+    const { controller } = await openVault()
+    await controller.startSave()
+    server.refusesExtension = true
+    const draft = {
+      accountName: "New site",
+      siteOrApp: "new-site.example.test",
+      username: "new.student",
+      password: "typed on the page 1",
+    }
+    await controller.saveLogin(draft)
+    expect(controller.current).toMatchObject({
+      name: "save",
+      draft,
+      error:
+        "UNG Password Manager isn't accepting this extension, so your login wasn't saved.",
       busy: false,
     })
     controller.dispose()

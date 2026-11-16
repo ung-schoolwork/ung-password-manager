@@ -24,6 +24,7 @@ const views = {
   vault: element("vault-view"),
   save: element("save-view"),
   unavailable: element("unavailable-view"),
+  blocked: element("blocked-view"),
 } satisfies Record<PopupView["name"], HTMLElement>
 
 const signInForm = element<HTMLFormElement>("sign-in-form")
@@ -41,6 +42,7 @@ const vaultAccount = element("vault-account")
 const vaultEmpty = element("vault-empty")
 const vaultContent = element("vault-content")
 const vaultSearch = element<HTMLInputElement>("vault-search")
+const vaultSearchBox = element("vault-search-box")
 const siteLogins = element("site-logins")
 const siteHeading = element("site-heading")
 const siteEntries = element("site-entries")
@@ -104,13 +106,24 @@ function listEntries(list: HTMLElement, entries: VaultEntry[]) {
         "aria-label",
         entry.username ? `Fill ${label}, ${entry.username}` : `Fill ${label}`
       )
+      const initial = document.createElement("span")
+      initial.className = "initial"
+      initial.setAttribute("aria-hidden", "true")
+      initial.textContent = label.trim().charAt(0).toUpperCase()
       const name = document.createElement("span")
       name.className = "name"
       name.textContent = label
       const username = document.createElement("span")
       username.className = "username"
       username.textContent = entry.username
-      button.append(name, username)
+      const text = document.createElement("span")
+      text.className = "text"
+      text.append(name, username)
+      const action = document.createElement("span")
+      action.className = "fill"
+      action.setAttribute("aria-hidden", "true")
+      action.textContent = "Fill"
+      button.append(initial, text, action)
       item.append(button)
       return item
     })
@@ -183,7 +196,7 @@ function renderSave(view: Extract<PopupView, { name: "save" }>) {
 function renderVault(view: Extract<PopupView, { name: "vault" }>) {
   vaultAccount.textContent = `Signed in as ${view.email}`
   vaultEmpty.hidden = view.total > 0
-  vaultContent.hidden = view.total === 0
+  vaultContent.hidden = vaultSearchBox.hidden = view.total === 0
   if (vaultSearch.value !== view.query) vaultSearch.value = view.query
 
   const searching = view.results !== null
@@ -402,14 +415,16 @@ unlockForm.addEventListener("submit", (event) => {
 for (const button of document.querySelectorAll(".sign-out"))
   button.addEventListener("click", () => void controller.signOut())
 element("lock").addEventListener("click", () => controller.lock())
-element("retry").addEventListener("click", () => void controller.start())
+for (const id of ["retry", "blocked-retry"])
+  element(id).addEventListener("click", () => void controller.start())
 
 function openApp(path: string) {
   void chrome.tabs.create({ url: `${APP_ORIGIN}${path}` })
   window.close()
 }
 element("create-account").addEventListener("click", () => openApp("/register"))
-element("open-vault").addEventListener("click", () => openApp("/vault"))
+for (const id of ["open-vault", "blocked-open-app"])
+  element(id).addEventListener("click", () => openApp("/vault"))
 
 // Closing the popup ends this page and everything it held; drop the keys and
 // logins explicitly as well, in case the page lingers.

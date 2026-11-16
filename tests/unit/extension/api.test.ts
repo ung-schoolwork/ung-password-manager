@@ -194,6 +194,40 @@ describe("extension device and vault access", () => {
     ).toEqual({ state: "unavailable" })
   })
 
+  it("tells an app that refuses this extension apart from one it can't reach", async () => {
+    const refused = () => server(403, { error: "Forbidden" })
+    const proof = { email: "a@example.test", authKey: "b".repeat(64) }
+    expect(await signIn(origin, proof, refused())).toEqual({ state: "blocked" })
+    expect(await signOut(origin, refused())).toEqual({ state: "blocked" })
+    expect(await fetchDevice(origin, refused())).toEqual({ state: "blocked" })
+    expect(
+      await saveVault(
+        origin,
+        { envelope: envelope as never, expectedRevision: revision },
+        refused()
+      )
+    ).toEqual({ state: "blocked" })
+    // A device that is not approved yet is still reported as such.
+    expect(
+      await saveVault(
+        origin,
+        { envelope: envelope as never, expectedRevision: revision },
+        server(403, { error: "Device not approved" })
+      )
+    ).toEqual({ state: "not-approved" })
+    // No answer at all, or a server error, means the app can't be reached.
+    const offline = (async () => {
+      throw new TypeError("Failed to fetch")
+    }) as unknown as typeof fetch
+    expect(await fetchDevice(origin, offline)).toEqual({ state: "unavailable" })
+    expect(await signIn(origin, proof, offline)).toEqual({
+      state: "unavailable",
+    })
+    expect(await fetchDevice(origin, server(503))).toEqual({
+      state: "unavailable",
+    })
+  })
+
   it("routes each popup request to its endpoint", async () => {
     const paths: Record<string, string> = {
       session: "/api/auth/session",
