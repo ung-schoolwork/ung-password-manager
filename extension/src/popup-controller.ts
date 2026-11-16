@@ -77,7 +77,10 @@ export type PopupView =
       error: string | null
       busy: boolean
     }
+  /** The app could not be reached, or failed to answer. */
   | { name: "unavailable" }
+  /** The app answered but does not accept requests from this extension. */
+  | { name: "blocked" }
 
 /** A login the user is about to save from the popup. */
 export interface SaveDraft {
@@ -159,6 +162,8 @@ const MESSAGES = {
   throttled: "Too many attempts. Wait a few minutes and try again.",
   unavailable:
     "Can't reach UNG Password Manager right now. Check your connection and try again.",
+  blockedSave:
+    "UNG Password Manager isn't accepting this extension, so your login wasn't saved.",
   signOutFailed: "Sign-out could not be completed. Try signing out again.",
   signedOut: "You were signed out.",
   saveFailed:
@@ -253,6 +258,7 @@ export class PopupController {
     if (generation !== this.generation) return
     if (result.state === "rejected") return this.showSignIn(MESSAGES.rejected)
     if (result.state === "throttled") return this.showSignIn(MESSAGES.throttled)
+    if (result.state === "blocked") return this.showBlocked()
     if (result.state !== "signed-in")
       return this.showSignIn(MESSAGES.unavailable)
     this.account = { userId: result.userId, email: result.email }
@@ -287,6 +293,7 @@ export class PopupController {
     const result = await this.send({ type: "sign-out" })
     if (generation !== this.generation) return
     if (result.state === "signed-out") return this.showSignIn(null)
+    if (result.state === "blocked") return this.showBlocked()
     // The session may still be valid: show where the browser stands now.
     await this.start()
     if (this.view.name === "unlock") this.showUnlock(MESSAGES.signOutFailed)
@@ -446,6 +453,7 @@ export class PopupController {
         this.show({ name: "loading" })
         return this.checkDevice(generation)
       }
+      if (result.state === "blocked") return showForm({}, MESSAGES.blockedSave)
       if (result.state !== "conflict") return showForm({}, MESSAGES.saveFailed)
       // Another device saved first: add the login to its vault instead.
       const latest = await this.send({ type: "vault" })
@@ -523,6 +531,11 @@ export class PopupController {
     this.show({ name: "unavailable" })
   }
 
+  private showBlocked() {
+    this.reset()
+    this.show({ name: "blocked" })
+  }
+
   private showUnlock(error: string | null) {
     if (!this.account) return this.showSignIn(null)
     this.show({ name: "unlock", email: this.account.email, error, busy: false })
@@ -545,6 +558,7 @@ export class PopupController {
     if (generation !== this.generation || !this.account) return
     if (device.state === "signed-out")
       return this.showSignIn(MESSAGES.signedOut)
+    if (device.state === "blocked") return this.showBlocked()
     if (device.state === "unavailable") return this.showUnavailable()
     if (device.state === "pending") {
       this.show({
@@ -571,6 +585,7 @@ export class PopupController {
       this.forgetVault()
       return this.checkDevice(generation)
     }
+    if (result.state === "blocked") return this.showBlocked()
     if (result.state !== "ok") return this.showUnavailable()
     try {
       await this.decrypt(generation, result.snapshot)

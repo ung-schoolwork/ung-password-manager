@@ -64,6 +64,12 @@ await writeFile(
 )
 for (const file of ["popup.html", "popup.css"])
   await copyFile(path.join(root, "src", file), path.join(outdir, file))
+await mkdir(path.join(outdir, "icons"))
+for (const size of [16, 32, 48, 128])
+  await copyFile(
+    path.join(root, "icons", `icon-${size}.png`),
+    path.join(outdir, "icons", `icon-${size}.png`)
+  )
 
 const shown = path.relative(process.cwd(), outdir)
 console.log(

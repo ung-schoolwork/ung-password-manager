@@ -21,6 +21,11 @@ export type SignedOut = { state: "signed-out" }
 export type Unavailable = { state: "unavailable" }
 /** This Chrome profile is signed in but is not an approved device. */
 export type NotApproved = { state: "not-approved" }
+/**
+ * The app answered but refused this extension's origin (it is not listed in
+ * the server's EXTENSION_ORIGINS), so nothing the popup sends can succeed.
+ */
+export type Blocked = { state: "blocked" }
 
 export type SessionStatus =
   | { state: "signed-in"; userId: string; email: string }
@@ -31,12 +36,14 @@ export type SignInResult =
   | Extract<SessionStatus, { state: "signed-in" }>
   | { state: "rejected" }
   | { state: "throttled" }
+  | Blocked
   | Unavailable
 
 export type DeviceStatus =
   | { state: "approved" }
   | { state: "pending"; code: string; expiresAt: string }
   | SignedOut
+  | Blocked
   | Unavailable
 
 export interface VaultSnapshot {
@@ -49,15 +56,17 @@ export type VaultResult =
   | { state: "ok"; snapshot: VaultSnapshot }
   | SignedOut
   | NotApproved
+  | Blocked
   | Unavailable
 
 export type RevisionResult =
   | { state: "ok"; revision: string | null }
   | SignedOut
   | NotApproved
+  | Blocked
   | Unavailable
 
-export type SignOutResult = SignedOut | Unavailable
+export type SignOutResult = SignedOut | Blocked | Unavailable
 
 export type SaveVaultResult =
   | { state: "saved"; revision: string }
@@ -65,6 +74,7 @@ export type SaveVaultResult =
   | { state: "conflict" }
   | SignedOut
   | NotApproved
+  | Blocked
   | Unavailable
 
 export type ExtensionRequest =
@@ -128,7 +138,7 @@ async function call(
   path: string,
   fetchImpl: Fetch,
   init: { method: "GET" | "POST" | "PUT"; body?: unknown } = { method: "GET" }
-): Promise<{ status: number; body: unknown } | null> {
+): Promise<Answer> {
   try {
     const response = await fetchImpl(`${appOrigin}${path}`, {
       method: init.method,
@@ -147,6 +157,20 @@ async function call(
   } catch {
     return null
   }
+}
+
+type Answer = { status: number; body: unknown } | null
+
+/**
+ * The app refuses requests from origins it does not allow with 403 and
+ * `{ error: "Forbidden" }`. Other 403s (such as "Device not approved") mean
+ * something else.
+ */
+function originRefused(result: Answer) {
+  return (
+    result?.status === 403 &&
+    (result.body as { error?: unknown } | null)?.error === "Forbidden"
+  )
 }
 
 function signedInFrom(body: unknown): SessionStatus {
@@ -184,6 +208,7 @@ export async function signIn(
   if (result?.status === 400 || result?.status === 401)
     return { state: "rejected" }
   if (result?.status === 429) return { state: "throttled" }
+  if (originRefused(result)) return { state: "blocked" }
   if (result?.status !== 200) return { state: "unavailable" }
   const session = signedInFrom(result.body)
   return session.state === "signed-in" ? session : { state: "unavailable" }
@@ -197,9 +222,9 @@ export async function signOut(
   const result = await call(appOrigin, "/api/auth/logout", fetchImpl, {
     method: "POST",
   })
-  return result?.status === 200 || result?.status === 401
-    ? { state: "signed-out" }
-    : { state: "unavailable" }
+  if (result?.status === 200 || result?.status === 401)
+    return { state: "signed-out" }
+  return originRefused(result) ? { state: "blocked" } : { state: "unavailable" }
 }
 
 /**
@@ -216,6 +241,7 @@ export async function fetchDevice(
     body: {},
   })
   if (result?.status === 401) return { state: "signed-out" }
+  if (originRefused(result)) return { state: "blocked" }
   if (result?.status !== 200) return { state: "unavailable" }
   const body = result.body as {
     approved?: unknown
@@ -234,10 +260,11 @@ export async function fetchDevice(
 }
 
 function vaultAccessFailure(
-  status: number | undefined
-): SignedOut | NotApproved | Unavailable {
-  if (status === 401) return { state: "signed-out" }
-  if (status === 403) return { state: "not-approved" }
+  result: Answer
+): SignedOut | NotApproved | Blocked | Unavailable {
+  if (result?.status === 401) return { state: "signed-out" }
+  if (originRefused(result)) return { state: "blocked" }
+  if (result?.status === 403) return { state: "not-approved" }
   return { state: "unavailable" }
 }
 
@@ -247,7 +274,7 @@ export async function fetchVault(
   fetchImpl: Fetch = fetch
 ): Promise<VaultResult> {
   const result = await call(appOrigin, "/api/vault", fetchImpl)
-  if (result?.status !== 200) return vaultAccessFailure(result?.status)
+  if (result?.status !== 200) return vaultAccessFailure(result)
   const body = result.body as Record<string, unknown> | null
   const wrappedVaultKey = parseWrappedVaultKey(body?.wrappedVaultKey)
   if (!wrappedVaultKey) return { state: "unavailable" }
@@ -278,7 +305,7 @@ export async function fetchRevision(
   fetchImpl: Fetch = fetch
 ): Promise<RevisionResult> {
   const result = await call(appOrigin, "/api/vault/revision", fetchImpl)
-  if (result?.status !== 200) return vaultAccessFailure(result?.status)
+  if (result?.status !== 200) return vaultAccessFailure(result)
   const revision = (result.body as { revision?: unknown } | null)?.revision
   if (revision === null) return { state: "ok", revision: null }
   return isVaultRevision(revision)
@@ -304,7 +331,7 @@ export async function saveVault(
     },
   })
   if (result?.status === 409) return { state: "conflict" }
-  if (result?.status !== 200) return vaultAccessFailure(result?.status)
+  if (result?.status !== 200) return vaultAccessFailure(result)
   const revision = (result.body as { revision?: unknown } | null)?.revision
   return isVaultRevision(revision)
     ? { state: "saved", revision }

@@ -113,7 +113,7 @@ The extension is not in the Chrome Web Store, so Chrome loads it from a folder. 
 4. Choose **Load unpacked** and select the `extension/dist` folder.
 5. Click the puzzle-piece icon in the toolbar and pin **UNG Password Manager**, then click it to sign in.
 
-To share the extension, copy or zip the `extension/dist` folder; the person receiving it unzips it and follows steps 3 to 5. After rebuilding, press the reload button on the extension's card in `chrome://extensions`. If the popup says it can't reach UNG Password Manager, check that the app is running at the address the extension was built for and that `EXTENSION_ORIGINS` is set.
+To share the extension, copy or zip the `extension/dist` folder; the person receiving it unzips it and follows steps 3 to 5. After rebuilding, press the reload button on the extension's card in `chrome://extensions`. If the popup says it can't reach UNG Password Manager, check that the app is running at the address the extension was built for. If it says the extension isn't allowed, the server answered but refused the extension's origin (403 `Forbidden`): add it to `EXTENSION_ORIGINS` and restart the app.
 
 ### Building and how it works
 
@@ -123,6 +123,8 @@ EXTENSION_APP_ORIGIN=https://app.example.com bun run build:extension   # deploye
 ```
 
 The build writes an unpacked extension to `extension/dist` (ignored by git). To load it, open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select `extension/dist`. After rebuilding, press the extension's reload button on that page. `EXTENSION_APP_ORIGIN` must be an exact origin and must use HTTPS unless it is a local server; the extension is granted host permission for that origin only.
+
+**Icons.** `extension/icons/icon.svg` is the app's ShieldCheck mark on its primary tile; the 16, 32, 48, and 128 px PNGs the manifest lists are rendered from it (the command is in the SVG) and copied into the build.
 
 **Extension ID.** The build puts the public key from `extension/identity.ts` in the manifest `key`, so Chrome loads the unpacked extension as `chrome-extension://ibfocpogcdoolfmhcmnkiojgfpbkfbgj` on every machine. The build prints this origin. Only the public key is kept in the repository; it fixes the ID but cannot sign a package. Publishing to the Chrome Web Store assigns a different ID, which must then be added to `EXTENSION_ORIGINS`.
 

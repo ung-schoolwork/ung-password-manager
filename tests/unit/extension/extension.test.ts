@@ -30,6 +30,28 @@ describe("extension identity", () => {
   })
 })
 
+describe("extension icons", () => {
+  it("lists a toolbar and store icon for each size Chrome asks for", async () => {
+    const manifest = await Bun.file(
+      path.join(root, "extension/manifest.json")
+    ).json()
+    const sizes = ["16", "32", "48", "128"]
+    expect(Object.keys(manifest.icons)).toEqual(sizes)
+    for (const [size, file] of [
+      ...Object.entries(manifest.icons),
+      ...Object.entries(manifest.action.default_icon),
+    ] as [string, string][]) {
+      const png = new DataView(
+        await Bun.file(path.join(root, "extension", file)).arrayBuffer()
+      )
+      // PNG signature, then the IHDR width and height.
+      expect(png.getUint32(0)).toBe(0x89504e47)
+      expect(png.getUint32(16)).toBe(Number(size))
+      expect(png.getUint32(20)).toBe(Number(size))
+    }
+  })
+})
+
 describe("extension app origin", () => {
   it("accepts exact HTTPS origins and local HTTP servers", () => {
     expect(parseAppOrigin("https://app.example.test")).toBe(
