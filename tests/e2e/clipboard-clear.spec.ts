@@ -602,3 +602,38 @@ test("the pending clear of a saved password does not keep it in memory after loc
 
   expect(await heldClearTimersReach(page, password)).toBe(false)
 })
+
+test("retries a failed clear when the user returns to the tab", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a browser that refuses the clear while the tab is in the
+  // background, then allows it again once the user is back.
+  await page.evaluate(() => {
+    const w = window as unknown as { allowClear?: boolean }
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard)
+    navigator.clipboard.writeText = (text: string) =>
+      text === "" && !w.allowClear
+        ? Promise.reject(new DOMException("Write denied", "NotAllowedError"))
+        : writeText(text)
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Couldn't clear the password from your clipboard. Copy something else to replace it.",
+    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+  )
+  expect(await readClipboard(page)).toBe(credentialPassword)
+
+  await page.evaluate(() => {
+    const w = window as unknown as { allowClear?: boolean }
+    w.allowClear = true
+    window.dispatchEvent(new Event("focus"))
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard."
+  )
+  await expect.poll(() => readClipboard(page)).toBe("")
+})

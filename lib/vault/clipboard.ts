@@ -57,6 +57,7 @@ function notify(copyId: number, result: ClipboardClearResult) {
 }
 
 function cancelPendingClear() {
+  disarmReturnRetry()
   if (!pendingClear) return
   clearTimeout(pendingClear.timer)
   pendingClear = null
@@ -116,6 +117,67 @@ async function readClipboardWithoutPrompt(): Promise<string> {
   }
 }
 
+// When the browser refuses to empty the clipboard (typically because the tab
+// is in the background), the clear is retried once the user returns to the
+// tab (SCRUM-76). Like the timer, the retry keeps only the digest, never the
+// copied value. A newer copy cancels it.
+let pendingRetry: { digest: string; sequence: number } | null = null
+
+function retryOnReturn() {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden")
+    return
+  const retry = pendingRetry
+  disarmReturnRetry()
+  if (retry) void attemptClear(retry.sequence, retry.digest)
+}
+
+function armReturnRetry() {
+  if (typeof document === "undefined" || typeof window === "undefined") return
+  document.addEventListener("visibilitychange", retryOnReturn)
+  window.addEventListener("focus", retryOnReturn)
+}
+
+function disarmReturnRetry() {
+  pendingRetry = null
+  if (typeof document === "undefined" || typeof window === "undefined") return
+  document.removeEventListener("visibilitychange", retryOnReturn)
+  window.removeEventListener("focus", retryOnReturn)
+}
+
+// One attempt to clear the copy with this sequence number: only if the
+// clipboard still holds it (SCRUM-24 AC), and never over a newer copy.
+async function attemptClear(sequence: number, digest: string): Promise<void> {
+  if (copySequence !== sequence) return
+
+  let checked = true
+  let stillOurs = true
+  try {
+    stillOurs = (await digestOf(await readClipboardWithoutPrompt())) === digest
+  } catch {
+    // Some browsers block reads. Clearing anyway is safer than leaving a
+    // credential sitting in the clipboard, but it may also remove something
+    // the user copied elsewhere, so the user is told (SCRUM-38).
+    checked = false
+  }
+
+  // A copy may have landed while the clipboard was being read.
+  if (copySequence !== sequence) return
+  pendingClear = null
+
+  if (!stillOurs) return
+
+  try {
+    await navigator.clipboard.writeText("")
+  } catch {
+    if (copySequence !== sequence) return
+    pendingRetry = { digest, sequence }
+    armReturnRetry()
+    notify(sequence, "clear-failed")
+    return
+  }
+  notify(sequence, checked ? "cleared" : "cleared-unchecked")
+}
+
 // Calls `listener` with the copy's id (as returned by copyWithAutoClear) and
 // the outcome each time an auto-clear runs for a copy that was still on the
 // clipboard (or could not be checked). Returns a function that stops
@@ -144,37 +206,10 @@ export async function copyWithAutoClear(value: string): Promise<number> {
   // A newer copy may have landed while hashing; it owns the clipboard now.
   if (sequence !== copySequence) return sequence
 
-  const timer = setTimeout(async () => {
-    if (pendingClear?.sequence !== sequence) return
-
-    // Only clear if the clipboard still holds what we copied — the user may
-    // have copied something else in the meantime (SCRUM-24 AC).
-    let checked = true
-    let stillOurs = true
-    try {
-      stillOurs =
-        (await digestOf(await readClipboardWithoutPrompt())) === digest
-    } catch {
-      // Some browsers block reads. Clearing anyway is safer than leaving a
-      // credential sitting in the clipboard, but it may also remove something
-      // the user copied elsewhere, so the user is told (SCRUM-38).
-      checked = false
-    }
-
-    // A copy may have landed while the clipboard was being read.
-    if (pendingClear?.sequence !== sequence) return
-    pendingClear = null
-
-    if (!stillOurs) return
-
-    try {
-      await navigator.clipboard.writeText("")
-    } catch {
-      notify(sequence, "clear-failed")
-      return
-    }
-    notify(sequence, checked ? "cleared" : "cleared-unchecked")
-  }, CLEAR_AFTER_MS)
+  const timer = setTimeout(
+    () => attemptClear(sequence, digest),
+    CLEAR_AFTER_MS
+  )
 
   pendingClear = { timer, digest, sequence }
   return sequence
