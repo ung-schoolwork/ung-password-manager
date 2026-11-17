@@ -126,7 +126,6 @@ export function IncomingShares({
   }
 
   const shownError = error ?? listError
-  if (shares.length === 0 && !shownError) return null
   const activeCount = shares.filter(
     (share) => statusOf(share) === "active"
   ).length
@@ -138,10 +137,12 @@ export function IncomingShares({
         <CardDescription className="text-sm">
           {shownError
             ? shownError
-            : `${activeCount} ${activeCount === 1 ? "credential" : "credentials"} available to you.`}
+            : shares.length === 0
+              ? "Nothing has been shared with you yet."
+              : `${activeCount} ${activeCount === 1 ? "credential" : "credentials"} you can open.`}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="has-[ul:empty]:hidden">
         <ul className="flex flex-col gap-2" aria-label="Shared with you">
           {shares.map((share) => {
             const status = statusOf(share)
@@ -171,7 +172,7 @@ export function IncomingShares({
                           </span>
                           <ShareStatusBadge status={status} />
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p className="break-words text-xs text-muted-foreground">
                           Shared by {share.fromEmail}
                           {status === "active"
                             ? share.expiresAt

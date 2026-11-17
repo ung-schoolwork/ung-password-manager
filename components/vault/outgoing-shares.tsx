@@ -76,17 +76,19 @@ export function OutgoingShares({
     }
   }
 
-  if (shares.length === 0) return null
 
   return (
     <Card className="min-w-0">
       <CardHeader>
         <CardTitle className="text-lg">Shared by you</CardTitle>
         <CardDescription className="text-sm">
-          {error ?? "People you've shared credentials with."}
+          {error ??
+            (shares.length === 0
+              ? "You haven't shared any credentials yet."
+              : "People you've shared credentials with.")}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="has-[ul:empty]:hidden">
         <ul className="flex flex-col gap-2" aria-label="Shared by you">
           {shares.map((share) => {
             const status = currentStatus(share, now)
@@ -114,7 +116,7 @@ export function OutgoingShares({
                           </span>
                           <ShareStatusBadge status={status} />
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p className="break-words text-xs text-muted-foreground">
                           {statusDetail(share, status)}
                         </p>
                       </div>
