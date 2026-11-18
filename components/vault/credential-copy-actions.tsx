@@ -22,9 +22,7 @@ export function CredentialCopyActions({
   password: string
 }) {
   const [copiedField, setCopiedField] = useState<CopyField | null>(null)
-  const [clearMessageText, setClearMessageText] = useState<string | null>(
-    null
-  )
+  const [clearMessageText, setClearMessageText] = useState<string | null>(null)
   const [copyFailed, setCopyFailed] = useState(false)
   // The last copy made from these buttons, so a clear message only shows for
   // a copy of ours.

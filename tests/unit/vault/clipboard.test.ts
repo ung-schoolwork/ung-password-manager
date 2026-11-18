@@ -65,7 +65,7 @@ afterEach(() => {
 })
 
 // A stand-in page whose visibility and focus events the tests can fire, as
-// when the user switches away from the tab and back (SCRUM-76).
+// when the user switches away from the tab and back.
 const realDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
 const realWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
 

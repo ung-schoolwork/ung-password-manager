@@ -206,7 +206,7 @@ async function openGenerator(page: Page) {
 }
 
 // The Copy button on the generator page uses the same auto-clear as the saved
-// credentials (SCRUM-63). Its label flips to "Copied" for two seconds, so the
+// credentials. Its label flips to "Copied" for two seconds, so the
 // locator accepts both.
 async function copyGeneratedPassword(page: Page) {
   const copyButton = page.getByRole("button", {

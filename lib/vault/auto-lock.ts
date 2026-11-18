@@ -1,4 +1,4 @@
-// Locks the vault after a stretch without activity (SCRUM-60). Everything here
+// Locks the vault after a stretch without activity. Everything here
 // is free of React and browser globals so it can be unit tested with a fake
 // clock; components/vault/auto-lock.tsx wires it to the page.
 
