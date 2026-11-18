@@ -5,6 +5,7 @@ import {
   originAllowed,
 } from "@/lib/auth/server"
 import { currentApprovedDevice } from "@/lib/devices/server"
+import { readJsonObject } from "@/lib/http/json-body"
 import {
   createShare,
   endCredentialShares,
@@ -105,68 +106,32 @@ async function readBody(request: Request): Promise<{
   credentialId: string | null
   expiresAt: unknown
 } | null> {
+  const body = await readJsonObject(request, MAX_SHARE_REQUEST_BYTES)
+  if (!body) return null
+  const { recipientEmail, credential, credentialId, expiresAt } = body
   if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
-    ) ||
-    !request.body
+    typeof recipientEmail !== "string" ||
+    // Older pages send no id; their shares are not linked to a credential.
+    (credentialId != null && !isCredentialId(credentialId)) ||
+    !credential ||
+    typeof credential !== "object" ||
+    Array.isArray(credential)
   )
     return null
-  const declared = request.headers.get("content-length")
+  const { accountName, siteOrApp, username, password, notes } =
+    credential as Record<string, unknown>
   if (
-    declared &&
-    (!/^\d+$/.test(declared) || Number(declared) > MAX_SHARE_REQUEST_BYTES)
-  ) {
-    void request.body.cancel().catch(() => undefined)
+    typeof accountName !== "string" ||
+    typeof siteOrApp !== "string" ||
+    typeof username !== "string" ||
+    typeof password !== "string" ||
+    (notes !== undefined && typeof notes !== "string")
+  )
     return null
-  }
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > MAX_SHARE_REQUEST_BYTES) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return null
-    const { recipientEmail, credential, credentialId, expiresAt } =
-      parsed as Record<string, unknown>
-    if (
-      typeof recipientEmail !== "string" ||
-      // Older pages send no id; their shares are not linked to a credential.
-      (credentialId != null && !isCredentialId(credentialId)) ||
-      !credential ||
-      typeof credential !== "object" ||
-      Array.isArray(credential)
-    )
-      return null
-    const { accountName, siteOrApp, username, password, notes } =
-      credential as Record<string, unknown>
-    if (
-      typeof accountName !== "string" ||
-      typeof siteOrApp !== "string" ||
-      typeof username !== "string" ||
-      typeof password !== "string" ||
-      (notes !== undefined && typeof notes !== "string")
-    )
-      return null
-    return {
-      recipientEmail,
-      credential: { accountName, siteOrApp, username, password, notes },
-      credentialId: isCredentialId(credentialId) ? credentialId : null,
-      expiresAt,
-    }
-  } catch {
-    return null
-  } finally {
-    reader.releaseLock()
+  return {
+    recipientEmail,
+    credential: { accountName, siteOrApp, username, password, notes },
+    credentialId: isCredentialId(credentialId) ? credentialId : null,
+    expiresAt,
   }
 }

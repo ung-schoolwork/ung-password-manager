@@ -9,6 +9,7 @@ import {
 import { parseWrappedVaultKey } from "@/lib/vault/remote"
 import type { WrappedVaultKey } from "@/lib/vault/types"
 import { isAllowedOrigin } from "@/lib/auth/origin"
+import { readJsonObject } from "@/lib/http/json-body"
 import {
   reportSourceProblem,
   resolveSourceAddress,
@@ -17,6 +18,8 @@ import {
 export const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000
 export const SESSION_COOKIE =
   process.env.NODE_ENV === "production" ? "__Host-ung_session" : "ung_session"
+// An email, a 64-hex auth key and a wrapped vault key fit well under this.
+const MAX_ACCOUNT_BODY_BYTES = 4096
 const LIMIT_WINDOW_MS = 15 * 60 * 1000
 const LIMITS = { global: 1000, source: 120, account: 10 } as const
 // The browser sends an auth key derived from the password, never the password.
@@ -133,46 +136,17 @@ export interface AccountInput {
 export async function accountInput(
   request: Request
 ): Promise<AccountInput | null> {
-  if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
-    )
-  )
+  const body = await readJsonObject(request, MAX_ACCOUNT_BODY_BYTES)
+  if (!body) return null
+  const { email, authKey, wrappedVaultKey } = body
+  if (typeof email !== "string" || typeof authKey !== "string") return null
+  const normalized = normalizeAccountEmail(email)
+  if (!isValidAccountEmail(normalized) || !/^[0-9a-f]{64}$/.test(authKey))
     return null
-  const declared = request.headers.get("content-length")
-  if (declared && (!/^\d+$/.test(declared) || Number(declared) > 4096)) {
-    await request.body?.cancel().catch(() => undefined)
-    return null
-  }
-  if (!request.body) return null
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > 4096) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-    if (!body || typeof body !== "object" || Array.isArray(body)) return null
-    const { email, authKey, wrappedVaultKey } = body as Record<string, unknown>
-    if (typeof email !== "string" || typeof authKey !== "string") return null
-    const normalized = normalizeAccountEmail(email)
-    if (!isValidAccountEmail(normalized) || !/^[0-9a-f]{64}$/.test(authKey))
-      return null
-    return {
-      email: normalized,
-      authKey,
-      wrappedVaultKey: parseWrappedVaultKey(wrappedVaultKey),
-    }
-  } finally {
-    reader.releaseLock()
+  return {
+    email: normalized,
+    authKey,
+    wrappedVaultKey: parseWrappedVaultKey(wrappedVaultKey),
   }
 }
 

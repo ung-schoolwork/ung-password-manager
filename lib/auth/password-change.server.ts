@@ -6,6 +6,7 @@ import {
   User,
   validAuthKey,
 } from "@/lib/auth/server"
+import { readJsonObject } from "@/lib/http/json-body"
 import { parseWrappedVaultKey } from "@/lib/vault/remote"
 import type { WrappedVaultKey } from "@/lib/vault/types"
 
@@ -27,67 +28,28 @@ export interface PasswordChangeInput {
 export async function passwordChangeInput(
   request: Request
 ): Promise<PasswordChangeInput | null> {
+  const body = await readJsonObject(request, MAX_BODY_BYTES)
+  if (!body) return null
+  const keys = Object.keys(body)
   if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
+    keys.length !== 3 ||
+    !["currentAuthKey", "authKey", "wrappedVaultKey"].every((key) =>
+      keys.includes(key)
     )
   )
     return null
-  const declared = request.headers.get("content-length")
+  const { currentAuthKey, authKey, wrappedVaultKey } = body
   if (
-    declared &&
-    (!/^\d+$/.test(declared) || Number(declared) > MAX_BODY_BYTES)
-  ) {
-    await request.body?.cancel().catch(() => undefined)
+    typeof currentAuthKey !== "string" ||
+    typeof authKey !== "string" ||
+    !AUTH_KEY.test(currentAuthKey) ||
+    !AUTH_KEY.test(authKey) ||
+    // The same auth key means the same password.
+    currentAuthKey === authKey
+  )
     return null
-  }
-  if (!request.body) return null
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > MAX_BODY_BYTES) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-    if (!body || typeof body !== "object" || Array.isArray(body)) return null
-    const keys = Object.keys(body)
-    if (
-      keys.length !== 3 ||
-      !["currentAuthKey", "authKey", "wrappedVaultKey"].every((key) =>
-        keys.includes(key)
-      )
-    )
-      return null
-    const { currentAuthKey, authKey, wrappedVaultKey } = body as Record<
-      string,
-      unknown
-    >
-    if (
-      typeof currentAuthKey !== "string" ||
-      typeof authKey !== "string" ||
-      !AUTH_KEY.test(currentAuthKey) ||
-      !AUTH_KEY.test(authKey) ||
-      // The same auth key means the same password.
-      currentAuthKey === authKey
-    )
-      return null
-    const wrapped = parseWrappedVaultKey(wrappedVaultKey)
-    return wrapped
-      ? { currentAuthKey, authKey, wrappedVaultKey: wrapped }
-      : null
-  } catch {
-    return null
-  } finally {
-    reader.releaseLock()
-  }
+  const wrapped = parseWrappedVaultKey(wrappedVaultKey)
+  return wrapped ? { currentAuthKey, authKey, wrappedVaultKey: wrapped } : null
 }
 
 export type PasswordChangeResult =
