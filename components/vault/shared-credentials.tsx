@@ -18,6 +18,9 @@ export function SharedCredentials() {
   const [incoming, setIncoming] = useState<IncomingShare[]>([])
   const [outgoing, setOutgoing] = useState<OutgoingShare[]>([])
   const [error, setError] = useState<string | null>(null)
+  // Set by the first answer, so "nothing shared yet" is never shown while
+  // the shares are still loading.
+  const [loaded, setLoaded] = useState(false)
   // Bumped by every refresh and every change made here, so a list that was
   // requested earlier can't bring back a share the user has just handled.
   const refreshVersion = useRef(0)
@@ -30,6 +33,7 @@ export function SharedCredentials() {
         setIncoming(latest.incoming)
         setOutgoing(latest.outgoing)
         setError(null)
+        setLoaded(true)
       }
     } catch {
       if (version === refreshVersion.current)
@@ -53,6 +57,8 @@ export function SharedCredentials() {
 
   const changed = useCallback(() => void refresh(), [refresh])
 
+  if (!loaded && !error) return null
+
   return (
     <>
       <IncomingShares
@@ -63,13 +69,15 @@ export function SharedCredentials() {
           setIncoming((current) => current.filter((share) => share.id !== id))
         }
       />
-      <OutgoingShares
-        shares={outgoing}
-        onChanged={changed}
-        onCleared={(id) =>
-          setOutgoing((current) => current.filter((share) => share.id !== id))
-        }
-      />
+      {loaded ? (
+        <OutgoingShares
+          shares={outgoing}
+          onChanged={changed}
+          onCleared={(id) =>
+            setOutgoing((current) => current.filter((share) => share.id !== id))
+          }
+        />
+      ) : null}
     </>
   )
 }

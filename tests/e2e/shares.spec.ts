@@ -65,9 +65,9 @@ async function openSharedWithYou(page: Page) {
     page.getByRole("dialog", { name: "Add a credential" })
   ).toBeVisible()
   await page.keyboard.press("Escape")
-  await expect(
-    page.getByRole("heading", { name: "Shared with you" })
-  ).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole("list", { name: "Shared with you" })).toBeVisible(
+    { timeout: 15_000 }
+  )
 }
 
 test("sharing a credential lets the recipient open it from their vault", async ({
@@ -179,8 +179,8 @@ test("removing access stops the recipient from opening the credential", async ({
     .getByRole("button", { name: /^Clear Revoked account/ })
     .click()
   await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toHaveCount(0)
+    recipient.page.getByText("Nothing has been shared with you yet.")
+  ).toBeVisible()
 
   await recipient.context.close()
 })
@@ -269,8 +269,8 @@ test("a recipient can remove a shared credential, and the owner sees it was remo
     .getByRole("button", { name: /^Remove Declined account/ })
     .click()
   await expect(
-    recipient.page.getByRole("heading", { name: "Shared with you" })
-  ).toHaveCount(0)
+    recipient.page.getByText("Nothing has been shared with you yet.")
+  ).toBeVisible()
   await expect(recipient.page.getByText("Declined account")).toHaveCount(0)
 
   await page.reload()
@@ -408,4 +408,85 @@ test("an unauthenticated request cannot list, create, open, or respond to shares
   expect(respond.status()).toBe(401)
 
   await context.close()
+})
+
+test("empty lists say that nothing has been shared yet", async ({ page }) => {
+  await accountWithVault(page)
+
+  await expect(
+    page.getByRole("heading", { name: "Shared with you" })
+  ).toBeVisible({ timeout: 15_000 })
+  await expect(
+    page.getByText("Nothing has been shared with you yet.")
+  ).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Shared by you" })
+  ).toBeVisible()
+  await expect(
+    page.getByText("You haven't shared any credentials yet.")
+  ).toBeVisible()
+})
+
+test.describe("on a narrow phone", () => {
+  const phone = { width: 360, height: 740 }
+  test.use({ viewport: phone })
+
+  test("the end date of a share is fully visible", async ({
+    page,
+    browser,
+  }) => {
+    await accountWithVault(page)
+    const context = await browser.newContext({ viewport: phone })
+    await setTestClientIp(context)
+    const recipientPage = await context.newPage()
+    const recipient = await accountWithVault(recipientPage)
+
+    await addCredential(page, "Phone account")
+    await shareWith(page, "Phone account", recipient.email, "After 7 days")
+
+    await openSharedWithYou(recipientPage)
+    const endDate = recipientPage
+      .getByRole("list", { name: "Shared with you" })
+      .getByText(/Access ends/)
+    await expect(endDate).toBeVisible()
+
+    // Nothing is cut off: the text fits its box, and the box fits the screen.
+    expect(
+      await endDate.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth
+      )
+    ).toBe(true)
+    const box = await endDate.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x + box!.width).toBeLessThanOrEqual(phone.width)
+
+    await context.close()
+  })
+})
+
+test("the empty message waits until the shares have loaded", async ({
+  page,
+}) => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route("**/api/shares", async (route) => {
+    if (route.request().method() !== "GET") return route.continue()
+    await gate
+    return route.continue()
+  })
+
+  await accountWithVault(page)
+  await expect(
+    page.getByRole("button", { name: "Add credential" }).first()
+  ).toBeVisible()
+  await expect(
+    page.getByText("Nothing has been shared with you yet.")
+  ).toHaveCount(0)
+
+  release()
+  await expect(
+    page.getByText("Nothing has been shared with you yet.")
+  ).toBeVisible({ timeout: 15_000 })
 })
