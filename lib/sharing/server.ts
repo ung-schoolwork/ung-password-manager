@@ -101,6 +101,10 @@ interface ShareSummary {
 interface StoredShare {
   fromUserId: string
   fromEmail: string
+  // The vault id of the owner's credential this share copies, so deleting
+  // the credential can end the share (see endCredentialShares). Null on
+  // shares made before this link existed.
+  credentialId?: string | null
   toUserId: string
   toEmail?: string
   payload?: string
@@ -117,6 +121,7 @@ interface StoredShare {
 const schema = new Schema<StoredShare>({
   fromUserId: { type: String, required: true, index: true },
   fromEmail: { type: String, required: true },
+  credentialId: { type: String, default: null },
   toUserId: { type: String, required: true, index: true },
   toEmail: { type: String },
   payload: { type: String },
@@ -132,6 +137,7 @@ const schema = new Schema<StoredShare>({
   ownerDismissedAt: { type: Date, default: null },
   recipientDismissedAt: { type: Date, default: null },
 })
+schema.index({ fromUserId: 1, credentialId: 1 })
 const Share =
   (mongoose.models.CredentialShare as
     mongoose.Model<StoredShare> | undefined) ||
@@ -187,6 +193,14 @@ function summaryOf(share: StoredShare): ShareSummary {
   return { accountName: "Shared credential", siteOrApp: "" }
 }
 
+// Vault ids are random UUIDs. Anything else is refused before it reaches a
+// query.
+const CREDENTIAL_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/
+
+export function isCredentialId(value: unknown): value is string {
+  return typeof value === "string" && CREDENTIAL_ID_PATTERN.test(value)
+}
+
 // A malformed ID is answered like a missing share, so the route returns 404
 // instead of failing on Mongo's cast error.
 function idFilter(shareId: string) {
@@ -199,6 +213,8 @@ export async function createShare(options: {
   fromEmail: string
   toEmail: string
   credential: CredentialDraft
+  /** The vault id of the credential being shared. */
+  credentialId?: string | null
   expiresAt?: Date | null
 }): Promise<{ id: string }> {
   await connectShares()
@@ -212,6 +228,7 @@ export async function createShare(options: {
   const share = await Share.create({
     fromUserId: options.fromUserId,
     fromEmail: options.fromEmail,
+    credentialId: options.credentialId ?? null,
     toUserId: String(recipient._id),
     toEmail: recipient.email,
     payload: encryptJson(options.credential),
@@ -244,6 +261,8 @@ export interface IncomingShare extends ShareDetails {
 /** A share this account sent. */
 export interface OutgoingShare extends ShareDetails {
   toEmail: string
+  /** The vault id of the shared credential, or null for older shares. */
+  credentialId: string | null
 }
 
 function details(share: StoredShare & { _id: unknown }, now: Date) {
@@ -309,6 +328,7 @@ export async function listOutgoingShares(
   return shares.map((share) => ({
     ...details(share, now),
     toEmail: share.toEmail ?? emails.get(share.toUserId) ?? "a deleted account",
+    credentialId: share.credentialId ?? null,
   }))
 }
 
@@ -404,6 +424,45 @@ export async function removeShare(
   if (cleared.ownerDismissedAt && cleared.recipientDismissedAt)
     await Share.deleteOne({ _id: cleared._id })
   return { role, status: shareStatus(cleared, now) }
+}
+
+/**
+ * Ends every share of a credential its owner is deleting, the same way
+ * "Remove access" does: the stored copy is wiped and the share stays listed
+ * as removed for both people.
+ *
+ * Why: a share is a separate copy of the credential. Without this, deleting
+ * the credential would leave that copy readable by everyone it was shared
+ * with, and the owner would no longer see it in their vault to remove it.
+ *
+ * The browser calls this before it deletes the credential from the vault.
+ * If this fails, the delete is stopped and nothing changes; if the vault
+ * update fails afterwards, the shares have still ended. Either way no copy
+ * outlives the credential.
+ *
+ * Shares saved before they recorded their credential id cannot be matched
+ * here: the vault is encrypted in the browser, so the server cannot tell
+ * which credential they came from. They stay listed under "Shared by you",
+ * where the owner can still remove access.
+ */
+export async function endCredentialShares(
+  ownerId: string,
+  credentialId: string,
+  now: Date = new Date()
+): Promise<{ ended: number }> {
+  await connectShares()
+  const scope = { fromUserId: ownerId, credentialId }
+  // One update per step, so a share is either fully ended or untouched.
+  const revoked = await Share.updateMany(
+    { ...scope, ...activeFilter(now) },
+    {
+      $set: { revokedAt: now, revokedBy: "owner" },
+      $unset: { payload: 1 },
+    }
+  )
+  // Shares that already expired but still hold a copy lose it too.
+  await wipeExpired(now, scope)
+  return { ended: revoked.modifiedCount }
 }
 
 /** Test and maintenance access to the stored records. */
