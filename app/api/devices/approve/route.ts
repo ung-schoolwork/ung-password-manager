@@ -9,12 +9,14 @@ import {
 import {
   approvePendingDevice,
   currentApprovedDevice,
-  readSmallJson,
 } from "@/lib/devices/server"
+import { readJsonObject } from "@/lib/http/json-body"
 import { normalizeDeviceCode } from "@/lib/devices/shared"
 
 export const runtime = "nodejs"
+// Codes are short, so cap guesses per account to keep brute force impractical.
 const ATTEMPT_CAP = 10
+const MAX_BODY_BYTES = 1024
 
 export async function POST(request: Request) {
   if (!originAllowed(request)) return json({ error: "Forbidden" }, 403)
@@ -23,12 +25,9 @@ export async function POST(request: Request) {
     if (!user) return json({ error: "Not authenticated" }, 401)
     if (!(await currentApprovedDevice(request, user.id)))
       return json({ error: "Device not approved" }, 403)
-    const body = await readSmallJson(request)
-    const raw =
-      body && typeof body === "object" && "code" in body
-        ? (body as { code: unknown }).code
-        : null
-    const code = typeof raw === "string" ? normalizeDeviceCode(raw) : null
+    const body = await readJsonObject(request, MAX_BODY_BYTES)
+    const code =
+      typeof body?.code === "string" ? normalizeDeviceCode(body.code) : null
     if (!code) return json({ error: "Invalid code" }, 400)
     const attempts = await increment(`device-approve:${user.id}`, new Date())
     if (attempts.count > ATTEMPT_CAP)

@@ -355,33 +355,3 @@ export async function removeDevice(
     await RemovalLock.deleteOne({ _id: ownerId, holder }).catch(() => undefined)
   }
 }
-
-export async function readSmallJson(request: Request): Promise<unknown> {
-  if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
-    ) ||
-    !request.body
-  )
-    return null
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > 1024) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
-  } catch {
-    return null
-  } finally {
-    reader.releaseLock()
-  }
-}
