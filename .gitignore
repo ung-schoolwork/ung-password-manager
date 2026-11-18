@@ -24,6 +24,8 @@
 
 # built Chrome extension (bun run build:extension)
 /extension/dist/
+# zipped extension download, built for APP_ORIGIN (bun run build / dev)
+/public/downloads/
 
 # deployment
 .vercel
