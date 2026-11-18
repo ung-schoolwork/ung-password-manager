@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-import { SettingsWorkspace } from "@/components/settings/settings-workspace"
+import { SettingsWorkspace } from "@/app/settings/_components/settings-workspace"
 
 export const metadata: Metadata = {
   title: "Settings · UNG Password Manager",

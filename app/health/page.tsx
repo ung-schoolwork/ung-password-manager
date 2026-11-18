@@ -11,7 +11,7 @@
 import type { Metadata } from "next"
 
 // "@/" is a path alias (configured in tsconfig) pointing at the project root/src.
-import { PasswordHealth } from "@/components/password-health"
+import { PasswordHealth } from "@/app/health/_components/password-health"
 
 // In the Next.js App Router, exporting a `metadata` object from a page sets
 // the <title> (and other <head> tags) for this route.

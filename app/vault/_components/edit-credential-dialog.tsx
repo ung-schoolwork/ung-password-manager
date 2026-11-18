@@ -8,8 +8,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { CredentialForm } from "@/components/vault/credential-form"
-import { DeleteCredentialSection } from "@/components/vault/delete-credential-section"
+import { CredentialForm } from "@/app/vault/_components/credential-form"
+import { DeleteCredentialSection } from "@/app/vault/_components/delete-credential-section"
 import type { Credential } from "@/lib/vault/types"
 
 export interface EditCredentialDialogProps {

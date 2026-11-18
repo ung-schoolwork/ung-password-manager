@@ -15,14 +15,14 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
+import { CredentialCopyActions } from "@/app/vault/_components/credential-copy-actions"
 import {
   getHealthStatusLabel,
   getHealthStatusText,
   getHealthStatusTextClassName,
   HealthShield,
 } from "@/components/vault/health-shield"
-import { ShareCredentialDialog } from "@/components/vault/share-credential-dialog"
+import { ShareCredentialDialog } from "@/app/vault/_components/share-credential-dialog"
 import { usePassphraseWordSet } from "@/components/vault/use-passphrase-word-set"
 import {
   analyzeCredentialsHealth,

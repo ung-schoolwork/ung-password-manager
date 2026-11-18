@@ -15,6 +15,10 @@ Production runs at <https://passwords.mediasave.llc> on a k3s cluster, in the
 Everything is pinned to the `threaderipper-server-nvme` worker, because
 `local-path` volumes live on that node's disk.
 
+Sign-in rate limits read the client IP from the header named by
+`AUTH_TRUSTED_IP_HEADER` (`cf-connecting-ip` in `site.yaml`). If it is missing,
+production refuses sign-in and registration.
+
 The image `ghcr.io/ung-schoolwork/ung-password-manager` is built by
 `.github/workflows/image.yml` on every push to `main` and tagged `latest` and
 `sha-<short commit>`. The build bakes `APP_ORIGIN` into build-time output such

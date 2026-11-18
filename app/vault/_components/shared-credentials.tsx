@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { IncomingShares } from "@/components/vault/incoming-shares"
-import { OutgoingShares } from "@/components/vault/outgoing-shares"
+import { IncomingShares } from "@/app/vault/_components/incoming-shares"
+import { OutgoingShares } from "@/app/vault/_components/outgoing-shares"
 import {
   listShares,
   onSharesChanged,

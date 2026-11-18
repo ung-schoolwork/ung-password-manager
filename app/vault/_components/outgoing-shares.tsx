@@ -16,7 +16,7 @@ import {
   formatShareDate,
   ShareStatusBadge,
   useNow,
-} from "@/components/vault/share-status"
+} from "@/app/vault/_components/share-status"
 import {
   removeShare,
   ShareRequestError,

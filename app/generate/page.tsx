@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-import { GeneratorWorkspace } from "@/components/vault/generator-workspace"
+import { GeneratorWorkspace } from "@/app/generate/_components/generator-workspace"
 
 export const metadata: Metadata = {
   title: "Generator · UNG Password Manager",

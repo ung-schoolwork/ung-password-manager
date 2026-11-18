@@ -1,691 +1,81 @@
-// The popup's account and vault state. All secrets live here, in the popup's
-// memory, and nowhere else: the wrapping key derived from the password, the
-// unwrapped vault key, the decrypted list of logins (without passwords), and a
-// login being saved until it is encrypted. Closing the popup discards them;
-// reopening it asks for the password again. Nothing is written
-// to extension storage, and the service worker only relays requests.
+// The popup's entry point. Each action is handled in its own module:
+// popup-session (sign in, unlock, approval), popup-fill, and popup-save.
+// popup-state holds the secrets and the shared screens.
 
+import { cancelSave, saveLogin, startSave } from "./popup-save"
+import { fill, search } from "./popup-fill"
+import { lock, signIn, signOut, start, unlock } from "./popup-session"
 import {
-  indexCredentialSearch,
-  searchCredentials,
-  type CredentialSearchEntry,
-} from "@/lib/vault/search"
-import {
-  credentialsForSite,
-  fillProblem,
-  savedSiteHost,
-  tabSiteHost,
-  type FillProblem,
-} from "@/lib/vault/site-match"
-import {
-  VAULT_DATA_VERSION,
-  type Credential,
-  type CredentialDraft,
-  type VaultDataV1,
-  type VaultEnvelope,
-} from "@/lib/vault/types"
-import {
-  CredentialValidationError,
-  validateCredentialDraft,
-  type CredentialField,
-} from "@/lib/vault/validation"
+  PopupState,
+  type PopupControllerOptions,
+  type PopupView,
+  type SaveDraft,
+} from "./popup-state"
 
-import type { ExtensionRequest, ExtensionResponses, VaultSnapshot } from "./api"
-import type { FillOutcome, PageLogin } from "./fill-page"
-import {
-  decryptVault,
-  deriveAccountKeys,
-  encryptVault,
-  unwrapVaultKey,
-  VaultUnlockError,
-} from "./vault"
-
-/** What the popup lists for each saved login. Passwords are not kept. */
-export interface VaultEntry {
-  id: string
-  accountName: string
-  siteOrApp: string
-  username: string
-}
-
-export type PopupView =
-  | { name: "loading" }
-  | { name: "sign-in"; error: string | null; busy: boolean }
-  | { name: "unlock"; email: string; error: string | null; busy: boolean }
-  | { name: "approval"; email: string; code: string }
-  | {
-      name: "vault"
-      email: string
-      /** The current tab's site, or null for a page that is not a website. */
-      site: string | null
-      /** Logins saved for the current tab's site. */
-      siteEntries: VaultEntry[]
-      query: string
-      /** Every login matching `query`, or null while the search is empty. */
-      results: VaultEntry[] | null
-      /** How many logins the vault holds. */
-      total: number
-      /** The result of the last fill, if any. */
-      notice: Notice | null
-    }
-  | {
-      name: "save"
-      email: string
-      draft: SaveDraft
-      /** Problems with single fields, shown next to them. */
-      errors: Partial<Record<CredentialField, string>>
-      error: string | null
-      busy: boolean
-    }
-  /** The app could not be reached, or failed to answer. */
-  | { name: "unavailable" }
-  /** The app answered but does not accept requests from this extension. */
-  | { name: "blocked" }
-
-/** A login the user is about to save from the popup. */
-export interface SaveDraft {
-  accountName: string
-  siteOrApp: string
-  username: string
-  password: string
-}
-
-export interface Notice {
-  text: string
-  tone: "info" | "error"
-}
-
-/** The tab the popup was opened on, read again when the user fills a login. */
-export interface CurrentTab {
-  id: number
-  url: string | null
-}
-
-/** One login, decrypted only to be filled and then dropped. */
-export interface FillLogin {
-  username: string
-  password: string
-  siteOrApp: string
-}
-
-export type Send = <T extends ExtensionRequest>(
-  request: T
-) => Promise<ExtensionResponses[T["type"]]>
-
-export interface PopupControllerOptions {
-  send: Send
-  render(view: PopupView): void
-  /** The URL of the tab the popup was opened on, if the browser shares it. */
-  tabUrl?: string | null
-  /** Reads the active tab when the user chooses a login to fill. */
-  currentTab?: () => Promise<CurrentTab | null>
-  /** Fills the login into the tab; null when the page could not be reached. */
-  fillPage?: (tabId: number, login: FillLogin) => Promise<FillOutcome | null>
-  /** Reads the sign-in fields the user filled in on the tab, to save them. */
-  readPage?: (tabId: number) => Promise<PageLogin | null>
-  /** How often a waiting device checks whether it has been approved. */
-  approvalPollMs?: number
-  /** How often an open vault checks it may still be shown. */
-  vaultPollMs?: number
-  deriveKeys?: typeof deriveAccountKeys
-}
-
-const FILL = {
-  both: "Filled your username and password.",
-  username:
-    "Filled your username. When the page asks for your password, open the extension and choose this login again.",
-  password: "Filled your password.",
-  none: "No sign-in fields were found on this page.",
-  failed:
-    "This page couldn't be filled. Open the extension from the page you want to sign in to.",
-}
-
-function refusal(
-  problem: FillProblem,
-  pageUrl: string | null | undefined,
-  siteOrApp: string
-): string {
-  switch (problem) {
-    case "not-a-website":
-      return "Logins can only be filled on websites."
-    case "insecure":
-      return "This page isn't secure, so the login wasn't filled."
-    case "no-website":
-      return "This login has no website address, so it can't be filled."
-    case "different-site":
-      return `This login is for ${savedSiteHost(siteOrApp)}, not ${tabSiteHost(pageUrl)}, so it wasn't filled.`
-  }
-}
-
-const MESSAGES = {
-  rejected: "The email or password is incorrect.",
-  throttled: "Too many attempts. Wait a few minutes and try again.",
-  unavailable:
-    "Can't reach UNG Password Manager right now. Check your connection and try again.",
-  blockedSave:
-    "UNG Password Manager isn't accepting this extension, so your login wasn't saved.",
-  signOutFailed: "Sign-out could not be completed. Try signing out again.",
-  signedOut: "You were signed out.",
-  saveFailed:
-    "Your login couldn't be saved. Check your connection and try again.",
-  saveBusy:
-    "Your vault is changing on another device. Wait a moment, then save again.",
-}
-
-// Saves attempted against newer vaults from other devices before giving up.
-const SAVE_ATTEMPTS = 3
+export type {
+  CurrentTab,
+  FillLogin,
+  Notice,
+  PopupControllerOptions,
+  PopupView,
+  SaveDraft,
+  Send,
+  VaultEntry,
+} from "./popup-state"
 
 export class PopupController {
-  private readonly send: Send
-  private readonly render: (view: PopupView) => void
-  private readonly approvalPollMs: number
-  private readonly vaultPollMs: number
-  private readonly deriveKeys: typeof deriveAccountKeys
-  private readonly site: string | null
-  private readonly tabUrl: string | null
-  private readonly currentTab: () => Promise<CurrentTab | null>
-  private readonly fillPage: (
-    tabId: number,
-    login: FillLogin
-  ) => Promise<FillOutcome | null>
-  private readonly readPage: (tabId: number) => Promise<PageLogin | null>
-
-  // Bumped whenever the account state is reset, so a reply to an earlier
-  // request can never reopen a vault that was locked in the meantime.
-  private generation = 0
-  private account: { userId: string; email: string } | null = null
-  /** Kept from sign-in only until this device is approved and the vault opens. */
-  private wrappingKey: CryptoKey | null = null
-  private vaultKey: CryptoKey | null = null
-  private revision: string | null = null
-  private entries: VaultEntry[] = []
-  private searchIndex: CredentialSearchEntry<VaultEntry>[] = []
-  private siteEntries: VaultEntry[] = []
-  private query = ""
-  /** The encrypted vault, kept to decrypt one login when it is filled. */
-  private envelope: VaultEnvelope | null = null
-  private notice: Notice | null = null
-  private filling = false
-  private timer: ReturnType<typeof setTimeout> | null = null
-  private view: PopupView = { name: "loading" }
+  private readonly state: PopupState
 
   constructor(options: PopupControllerOptions) {
-    this.send = options.send
-    this.render = options.render
-    this.approvalPollMs = options.approvalPollMs ?? 3_000
-    this.vaultPollMs = options.vaultPollMs ?? 5_000
-    this.deriveKeys = options.deriveKeys ?? deriveAccountKeys
-    this.tabUrl = options.tabUrl ?? null
-    this.currentTab = options.currentTab ?? (async () => null)
-    this.fillPage = options.fillPage ?? (async () => null)
-    this.readPage = options.readPage ?? (async () => null)
-    this.site = tabSiteHost(this.tabUrl)
+    this.state = new PopupState(options)
   }
 
   get current(): PopupView {
-    return this.view
+    return this.state.view
   }
 
-  /** Checks the browser's session and shows what this profile may do. */
-  async start(): Promise<void> {
-    const generation = this.reset()
-    this.show({ name: "loading" })
-    const session = await this.send({ type: "session" })
-    if (generation !== this.generation) return
-    if (session.state === "signed-out") return this.showSignIn(null)
-    if (session.state !== "signed-in") return this.showUnavailable()
-    this.account = { userId: session.userId, email: session.email }
-    await this.checkDevice(generation)
+  start(): Promise<void> {
+    return start(this.state)
   }
 
-  /** Signs this Chrome profile in, which signs the app in as well. */
-  async signIn(email: string, password: string): Promise<void> {
-    if (this.view.name !== "sign-in" || this.view.busy) return
-    const generation = this.reset()
-    this.show({ name: "sign-in", error: null, busy: true })
-    let keys: Awaited<ReturnType<typeof deriveAccountKeys>>
-    try {
-      keys = await this.deriveKeys(email, password)
-    } catch {
-      return this.showSignIn(MESSAGES.rejected)
-    }
-    if (generation !== this.generation) return
-    const result = await this.send({
-      type: "sign-in",
-      email,
-      authKey: keys.authKey,
-    })
-    if (generation !== this.generation) return
-    if (result.state === "rejected") return this.showSignIn(MESSAGES.rejected)
-    if (result.state === "throttled") return this.showSignIn(MESSAGES.throttled)
-    if (result.state === "blocked") return this.showBlocked()
-    if (result.state !== "signed-in")
-      return this.showSignIn(MESSAGES.unavailable)
-    this.account = { userId: result.userId, email: result.email }
-    this.wrappingKey = keys.wrappingKey
-    await this.checkDevice(generation)
+  signIn(email: string, password: string): Promise<void> {
+    return signIn(this.state, email, password)
   }
 
-  /** Opens the vault of the account this browser is already signed in to. */
-  async unlock(password: string): Promise<void> {
-    if (this.view.name !== "unlock" || this.view.busy || !this.account) return
-    const generation = this.generation
-    const email = this.account.email
-    this.show({ name: "unlock", email, error: null, busy: true })
-    let wrappingKey: CryptoKey
-    try {
-      ;({ wrappingKey } = await this.deriveKeys(email, password))
-    } catch {
-      if (generation === this.generation)
-        this.showUnlock("Your vault could not be opened. Try again.")
-      return
-    }
-    if (generation !== this.generation) return
-    this.wrappingKey = wrappingKey
-    await this.openVault(generation)
+  unlock(password: string): Promise<void> {
+    return unlock(this.state, password)
   }
 
-  /** Signs out the browser (the app and the extension) and locks the vault. */
-  async signOut(): Promise<void> {
-    // Forget every secret first, even if the request below fails.
-    const generation = this.reset()
-    this.show({ name: "loading" })
-    const result = await this.send({ type: "sign-out" })
-    if (generation !== this.generation) return
-    if (result.state === "signed-out") return this.showSignIn(null)
-    if (result.state === "blocked") return this.showBlocked()
-    // The session may still be valid: show where the browser stands now.
-    await this.start()
-    if (this.view.name === "unlock") this.showUnlock(MESSAGES.signOutFailed)
+  signOut(): Promise<void> {
+    return signOut(this.state)
   }
 
-  /** Searches every saved login by account name, website, or username. */
   search(query: string): void {
-    if (this.view.name !== "vault") return
-    this.query = query
-    this.notice = null
-    this.showVault()
+    search(this.state, query)
   }
 
-  /**
-   * Fills the chosen login into the current tab. Only that login's password
-   * is decrypted, and only after the tab has been checked again: it must still
-   * be on the login's site, over HTTPS (or http on this computer).
-   */
-  async fill(id: string): Promise<void> {
-    if (this.view.name !== "vault" || this.filling) return
-    const entry = this.entries.find((candidate) => candidate.id === id)
-    if (!entry) return
-    const generation = this.generation
-    this.filling = true
-    try {
-      const tab = await this.currentTab()
-      if (generation !== this.generation) return
-      const problem = tab
-        ? fillProblem(tab.url, entry.siteOrApp)
-        : "not-a-website"
-      if (!tab || problem)
-        return this.showNotice(
-          refusal(problem ?? "not-a-website", tab?.url, entry.siteOrApp),
-          "error"
-        )
-      const login = await this.decryptLogin(id)
-      if (generation !== this.generation) return
-      if (!login) return this.showNotice(FILL.failed, "error")
-      const outcome = await this.fillPage(tab.id, login)
-      if (generation !== this.generation) return
-      if (!outcome || "refused" in outcome)
-        return this.showNotice(FILL.failed, "error")
-      if (outcome.username && outcome.password)
-        return this.showNotice(FILL.both, "info")
-      if (outcome.username) return this.showNotice(FILL.username, "info")
-      if (outcome.password) return this.showNotice(FILL.password, "info")
-      this.showNotice(FILL.none, "error")
-    } finally {
-      this.filling = false
-    }
+  fill(id: string): Promise<void> {
+    return fill(this.state, id)
   }
 
-  /**
-   * Starts saving a login for the current website. When the page has a
-   * sign-in form the user filled in, its username and password are offered.
-   */
-  async startSave(): Promise<void> {
-    if (this.view.name !== "vault" || !this.account) return
-    const generation = this.generation
-    const email = this.account.email
-    const tab = await this.currentTab()
-    if (generation !== this.generation || this.view.name !== "vault") return
-    const host = tabSiteHost(tab?.url)
-    const page = tab && host ? await this.readPage(tab.id) : null
-    if (generation !== this.generation || this.view.name !== "vault") return
-    const typed = page && !("refused" in page) ? page : null
-    this.notice = null
-    this.show({
-      name: "save",
-      email,
-      draft: {
-        accountName: host ?? "",
-        siteOrApp: host ?? "",
-        username: typed?.username ?? "",
-        password: typed?.password ?? "",
-      },
-      errors: {},
-      error: null,
-      busy: false,
-    })
+  startSave(): Promise<void> {
+    return startSave(this.state)
   }
 
-  /** Leaves the save form without saving. */
   cancelSave(): void {
-    if (this.view.name !== "save" || this.view.busy) return
-    this.showVault()
+    cancelSave(this.state)
   }
 
-  /**
-   * Adds a login to the vault. The whole vault is encrypted again here, with
-   * the vault key, and only ciphertext leaves the popup. If another device
-   * saved first, the newer vault is loaded and the login is added to it.
-   */
-  async saveLogin(draft: SaveDraft): Promise<void> {
-    if (this.view.name !== "save" || this.view.busy || !this.account) return
-    const email = this.account.email
-    const showForm = (
-      errors: Partial<Record<CredentialField, string>>,
-      error: string | null,
-      busy = false
-    ) => this.show({ name: "save", email, draft, errors, error, busy })
-    let normalized: CredentialDraft
-    try {
-      normalized = validateCredentialDraft(draft)
-    } catch (error) {
-      if (error instanceof CredentialValidationError)
-        return showForm(error.fields, null)
-      throw error
-    }
-    const generation = this.generation
-    showForm({}, null, true)
-    const timestamp = new Date().toISOString()
-    const credential: Credential = {
-      ...normalized,
-      id: crypto.randomUUID(),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      passwordUpdatedAt: timestamp,
-    }
-    for (let attempt = 1; attempt <= SAVE_ATTEMPTS; attempt++) {
-      const vaultKey = this.vaultKey
-      const base = { envelope: this.envelope, revision: this.revision }
-      if (!vaultKey) return
-      let data: VaultDataV1
-      let envelope: VaultEnvelope
-      try {
-        data = base.envelope
-          ? await decryptVault(vaultKey, base.envelope)
-          : { version: VAULT_DATA_VERSION, credentials: [] }
-        data = { ...data, credentials: [credential, ...data.credentials] }
-        envelope = await encryptVault(vaultKey, data)
-      } catch {
-        if (generation === this.generation) showForm({}, MESSAGES.saveFailed)
-        return
-      }
-      if (generation !== this.generation) return
-      const result = await this.send({
-        type: "save-vault",
-        envelope,
-        expectedRevision: base.revision,
-      })
-      if (generation !== this.generation) return
-      if (result.state === "saved") {
-        this.envelope = envelope
-        this.revision = result.revision
-        this.setEntries(data.credentials)
-        this.notice = {
-          text: `Saved ${credential.accountName}.`,
-          tone: "info",
-        }
-        return this.showVault()
-      }
-      if (result.state === "signed-out")
-        return this.showSignIn(MESSAGES.signedOut)
-      if (result.state === "not-approved") {
-        this.forgetVault()
-        this.show({ name: "loading" })
-        return this.checkDevice(generation)
-      }
-      if (result.state === "blocked") return showForm({}, MESSAGES.blockedSave)
-      if (result.state !== "conflict") return showForm({}, MESSAGES.saveFailed)
-      // Another device saved first: add the login to its vault instead.
-      const latest = await this.send({ type: "vault" })
-      if (generation !== this.generation) return
-      if (latest.state !== "ok") return showForm({}, MESSAGES.saveFailed)
-      this.envelope = latest.snapshot.envelope
-      this.revision = latest.snapshot.revision
-    }
-    showForm({}, MESSAGES.saveBusy)
+  saveLogin(draft: SaveDraft): Promise<void> {
+    return saveLogin(this.state, draft)
   }
 
-  /** Locks the vault but keeps the browser signed in. */
   lock(): void {
-    const account = this.account
-    this.reset()
-    if (!account) return this.showSignIn(null)
-    this.account = account
-    this.showUnlock(null)
+    lock(this.state)
   }
 
   /** Forgets every secret, for example when the popup closes. */
   dispose(): void {
-    this.reset()
-  }
-
-  private reset(): number {
-    this.generation += 1
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = null
-    this.account = null
-    this.wrappingKey = null
-    this.forgetVault()
-    return this.generation
-  }
-
-  private forgetVault() {
-    this.vaultKey = null
-    this.revision = null
-    this.entries = []
-    this.searchIndex = []
-    this.siteEntries = []
-    this.query = ""
-    this.envelope = null
-    this.notice = null
-  }
-
-  private showVault() {
-    if (!this.account) return this.showSignIn(null)
-    this.show({
-      name: "vault",
-      email: this.account.email,
-      site: this.site,
-      siteEntries: this.siteEntries,
-      query: this.query,
-      results: this.query.trim()
-        ? searchCredentials(this.searchIndex, this.query)
-        : null,
-      total: this.entries.length,
-      notice: this.notice,
-    })
-  }
-
-  private show(view: PopupView) {
-    this.view = view
-    this.render(view)
-  }
-
-  private showSignIn(error: string | null) {
-    this.reset()
-    this.show({ name: "sign-in", error, busy: false })
-  }
-
-  private showUnavailable() {
-    this.reset()
-    this.show({ name: "unavailable" })
-  }
-
-  private showBlocked() {
-    this.reset()
-    this.show({ name: "blocked" })
-  }
-
-  private showUnlock(error: string | null) {
-    if (!this.account) return this.showSignIn(null)
-    this.show({ name: "unlock", email: this.account.email, error, busy: false })
-  }
-
-  private schedule(
-    generation: number,
-    delay: number,
-    work: () => Promise<void>
-  ) {
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => {
-      this.timer = null
-      if (generation === this.generation) void work()
-    }, delay)
-  }
-
-  private async checkDevice(generation: number): Promise<void> {
-    const device = await this.send({ type: "device" })
-    if (generation !== this.generation || !this.account) return
-    if (device.state === "signed-out")
-      return this.showSignIn(MESSAGES.signedOut)
-    if (device.state === "blocked") return this.showBlocked()
-    if (device.state === "unavailable") return this.showUnavailable()
-    if (device.state === "pending") {
-      this.show({
-        name: "approval",
-        email: this.account.email,
-        code: device.code,
-      })
-      this.schedule(generation, this.approvalPollMs, () =>
-        this.checkDevice(generation)
-      )
-      return
-    }
-    if (this.wrappingKey) return this.openVault(generation)
-    this.showUnlock(null)
-  }
-
-  private async openVault(generation: number): Promise<void> {
-    const result = await this.send({ type: "vault" })
-    if (generation !== this.generation) return
-    if (result.state === "signed-out")
-      return this.showSignIn(MESSAGES.signedOut)
-    if (result.state === "not-approved") {
-      // No vault data was sent. Keep the sign-in key until approval.
-      this.forgetVault()
-      return this.checkDevice(generation)
-    }
-    if (result.state === "blocked") return this.showBlocked()
-    if (result.state !== "ok") return this.showUnavailable()
-    try {
-      await this.decrypt(generation, result.snapshot)
-    } catch (error) {
-      if (generation !== this.generation) return
-      this.wrappingKey = null
-      this.forgetVault()
-      this.showUnlock(
-        error instanceof VaultUnlockError
-          ? error.message
-          : "Your vault could not be opened. Try again."
-      )
-    }
-  }
-
-  private showNotice(text: string, tone: Notice["tone"]) {
-    this.notice = { text, tone }
-    this.showVault()
-  }
-
-  private async decryptLogin(id: string): Promise<FillLogin | null> {
-    if (!this.vaultKey || !this.envelope) return null
-    try {
-      const data = await decryptVault(this.vaultKey, this.envelope)
-      const credential = data.credentials.find((item) => item.id === id)
-      return credential
-        ? {
-            username: credential.username,
-            password: credential.password,
-            siteOrApp: credential.siteOrApp,
-          }
-        : null
-    } catch {
-      return null
-    }
-  }
-
-  private async decrypt(generation: number, snapshot: VaultSnapshot) {
-    let vaultKey = this.vaultKey
-    if (!vaultKey) {
-      if (!this.wrappingKey) throw new VaultUnlockError()
-      vaultKey = await unwrapVaultKey(
-        this.wrappingKey,
-        snapshot.wrappedVaultKey
-      )
-    }
-    const data = snapshot.envelope
-      ? await decryptVault(vaultKey, snapshot.envelope)
-      : { credentials: [] }
-    if (generation !== this.generation || !this.account) return
-    // The vault key replaces the password-derived key from here on.
-    this.wrappingKey = null
-    this.vaultKey = vaultKey
-    this.revision = snapshot.revision
-    this.envelope = snapshot.envelope
-    this.setEntries(data.credentials)
-    // A login being saved stays on screen; the list behind it is up to date.
-    if (this.view.name !== "save") this.showVault()
-    this.schedule(generation, this.vaultPollMs, () => this.watch(generation))
-  }
-
-  /** Keeps the name, website, and username of each login; not passwords. */
-  private setEntries(credentials: Credential[]) {
-    this.entries = credentials
-      .map(({ id, accountName, siteOrApp, username }) => ({
-        id,
-        accountName,
-        siteOrApp,
-        username,
-      }))
-      .sort((a, b) =>
-        a.accountName.localeCompare(b.accountName, undefined, {
-          sensitivity: "base",
-        })
-      )
-    this.searchIndex = indexCredentialSearch(this.entries)
-    this.siteEntries = credentialsForSite(this.entries, this.tabUrl)
-  }
-
-  // While the vault is shown, confirm the browser is still signed in to the
-  // same account and still an approved device, and pick up changes.
-  private async watch(generation: number): Promise<void> {
-    const session = await this.send({ type: "session" })
-    if (generation !== this.generation || !this.account) return
-    if (session.state === "signed-out")
-      return this.showSignIn(MESSAGES.signedOut)
-    if (session.state === "signed-in" && session.userId !== this.account.userId)
-      return this.start()
-    const result = await this.send({ type: "revision" })
-    if (generation !== this.generation || !this.account) return
-    if (result.state === "signed-out")
-      return this.showSignIn(MESSAGES.signedOut)
-    if (result.state === "not-approved") {
-      // This browser was removed from the account's devices.
-      this.forgetVault()
-      this.show({ name: "loading" })
-      return this.checkDevice(generation)
-    }
-    if (result.state === "ok" && result.revision !== this.revision)
-      return this.openVault(generation)
-    this.schedule(generation, this.vaultPollMs, () => this.watch(generation))
+    this.state.reset()
   }
 }

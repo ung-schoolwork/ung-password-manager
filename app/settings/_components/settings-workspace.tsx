@@ -1,9 +1,9 @@
 "use client"
 
 import { useAccount } from "@/components/auth/account-provider"
-import { AutoLockSettings } from "@/components/settings/auto-lock-settings"
-import { DeviceSettings } from "@/components/settings/device-settings"
-import { PasswordSettings } from "@/components/settings/password-settings"
+import { AutoLockSettings } from "@/app/settings/_components/auto-lock-settings"
+import { DeviceSettings } from "@/app/settings/_components/device-settings"
+import { PasswordSettings } from "@/app/settings/_components/password-settings"
 import {
   Card,
   CardContent,
