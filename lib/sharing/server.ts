@@ -11,13 +11,9 @@ import type { CredentialDraft } from "@/lib/vault/types"
 const CIPHER_ALGORITHM = "aes-256-gcm"
 const IV_BYTES = 12
 
-// Known trade-off: credential sharing is NOT end-to-end encrypted like the
-// rest of the vault. The browser sends the credential to the server over
-// HTTPS, and the server encrypts it at rest with one symmetric key
-// (SHARE_ENCRYPTION_KEY) before storing it. Anyone with that key, or with code
-// execution on the server, can decrypt any active share. End-to-end sharing
-// would need a key pair per account, so the browser could encrypt straight to
-// the recipient's public key.
+// Known trade-off: sharing is not end-to-end encrypted. The server encrypts
+// shares at rest with SHARE_ENCRYPTION_KEY, so anyone with that key can read
+// active shares; E2E would need a key pair per account.
 
 export class RecipientNotFoundError extends Error {
   constructor() {
@@ -427,23 +423,10 @@ export async function removeShare(
 }
 
 /**
- * Ends every share of a credential its owner is deleting, the same way
- * "Remove access" does: the stored copy is wiped and the share stays listed
- * as removed for both people.
- *
- * Why: a share is a separate copy of the credential. Without this, deleting
- * the credential would leave that copy readable by everyone it was shared
- * with, and the owner would no longer see it in their vault to remove it.
- *
- * The browser calls this before it deletes the credential from the vault.
- * If this fails, the delete is stopped and nothing changes; if the vault
- * update fails afterwards, the shares have still ended. Either way no copy
- * outlives the credential.
- *
- * Shares saved before they recorded their credential id cannot be matched
- * here: the vault is encrypted in the browser, so the server cannot tell
- * which credential they came from. They stay listed under "Shared by you",
- * where the owner can still remove access.
+ * Ends every share of a credential being deleted, like "Remove access", so no
+ * shared copy outlives it. The browser calls this before the vault delete.
+ * Older shares without a credential id can't be matched; the owner can still
+ * remove them under "Shared by you".
  */
 export async function endCredentialShares(
   ownerId: string,
