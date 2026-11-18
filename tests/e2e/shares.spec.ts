@@ -185,6 +185,75 @@ test("removing access stops the recipient from opening the credential", async ({
   await recipient.context.close()
 })
 
+test("deleting a shared credential ends its shares", async ({
+  page,
+  browser,
+}) => {
+  await accountWithVault(page)
+  const recipient = await secondAccountWithVault(browser)
+
+  await addCredential(page, "Deleted account")
+  await shareWith(page, "Deleted account", recipient.account.email)
+  await openSharedWithYou(recipient.page)
+
+  await page.getByRole("button", { name: "Edit Deleted account" }).click()
+  const dialog = page.getByRole("dialog", { name: "Edit credential" })
+  await dialog.getByRole("button", { name: "Delete credential" }).click()
+  await expect(
+    dialog.getByText(
+      "Delete Deleted account? This can’t be undone. People you shared this with will lose access."
+    )
+  ).toBeVisible()
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click()
+  await expect(dialog).toBeHidden()
+
+  const sharedByYou = page.getByRole("list", { name: "Shared by you" })
+  await expect(sharedByYou).toContainText("Removed")
+  await expect(sharedByYou).toContainText("You removed access")
+
+  await recipient.page
+    .getByRole("button", { name: "Open Deleted account" })
+    .click()
+  const shared = recipient.page.getByRole("list", { name: "Shared with you" })
+  await expect(shared).toContainText(
+    "Your access to this shared credential was removed."
+  )
+  await expect(shared).not.toContainText("share-user")
+
+  const { incoming } = (await (
+    await recipient.page.request.get("/api/shares")
+  ).json()) as { incoming: { id: string; status: string }[] }
+  expect(incoming[0].status).toBe("removed")
+  const read = await recipient.page.request.get(`/api/shares/${incoming[0].id}`)
+  expect(read.status()).toBe(410)
+  expect(await read.text()).not.toContain("shared-credential-password-123")
+
+  await recipient.context.close()
+})
+
+test("deleting a credential that was never shared does not mention sharing", async ({
+  page,
+}) => {
+  await accountWithVault(page)
+  await addCredential(page, "Private account")
+
+  await page.getByRole("button", { name: "Edit Private account" }).click()
+  const dialog = page.getByRole("dialog", { name: "Edit credential" })
+  // Wait for the share check to answer before looking for the sentence.
+  const checked = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/shares" &&
+      response.request().method() === "GET"
+  )
+  await dialog.getByRole("button", { name: "Delete credential" }).click()
+  await checked
+  const question = dialog.getByText(
+    "Delete Private account? This can’t be undone."
+  )
+  await expect(question).toBeVisible()
+  await expect(question).not.toContainText("lose access")
+})
+
 test("a recipient can remove a shared credential, and the owner sees it was removed", async ({
   page,
   browser,
