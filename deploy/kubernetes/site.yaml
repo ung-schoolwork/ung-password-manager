@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ung-site
+  namespace: ung-password-manager
+spec:
+  type: ClusterIP
+  selector:
+    app: ung-site
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ung-site
+  namespace: ung-password-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ung-site
+  template:
+    metadata:
+      labels:
+        app: ung-site
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: threaderipper-server-nvme
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: site
+          # latest follows main; roll back with kubectl set image to a sha-<short> tag.
+          image: ghcr.io/ung-schoolwork/ung-password-manager:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: APP_ORIGIN
+              value: https://passwords.mediasave.llc
+            # Set by Cloudflare; the site is reachable only through the tunnel.
+            - name: AUTH_TRUSTED_IP_HEADER
+              value: cf-connecting-ip
+            - name: EXTENSION_ORIGINS
+              value: chrome-extension://ibfocpogcdoolfmhcmnkiojgfpbkfbgj
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ung-site
+                  key: MONGODB_URI
+            - name: SHARE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ung-site
+                  key: SHARE_ENCRYPTION_KEY
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /sign-in
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: next-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

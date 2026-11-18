@@ -337,6 +337,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs all of these on every pull requ
 
 ## Deployment
 
+The live site is <https://passwords.mediasave.llc>. The `Dockerfile` builds it, and [`deploy/kubernetes`](deploy/kubernetes/README.md) describes how it runs and how to redeploy.
+
 Two settings must be right before anyone can sign in or register on a deployed site:
 
 | Variable                 | Value                                                                                                                                      |
