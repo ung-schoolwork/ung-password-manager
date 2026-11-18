@@ -169,7 +169,7 @@ export function PasswordHealth() {
           />
           <div>
             <h2 className="text-sm font-semibold">Password check</h2>
-            <p className="text-xs opacity-90">
+            <p className="text-sm opacity-90">
               {totalIssues > 0
                 ? `Found ${totalIssues} ${totalIssues === 1 ? "issue" : "issues"} across ${accountsWithIssues.length} ${
                     accountsWithIssues.length === 1 ? "account" : "accounts"
@@ -182,7 +182,7 @@ export function PasswordHealth() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Vault Password Health</CardTitle>
+          <CardTitle className="text-lg">Vault password health</CardTitle>
           <CardDescription className="text-sm">
             Review saved passwords for length, reuse, and when they were last
             changed.
@@ -196,7 +196,7 @@ export function PasswordHealth() {
                   <KeyRound className="size-5" aria-hidden="true" />
                 </div>
                 <p className="mt-4 font-medium">No credentials in vault</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Add a credential to check its password.
                 </p>
               </div>
@@ -229,32 +229,34 @@ export function PasswordHealth() {
                       <div className="flex items-center gap-3">
                         <HealthShield status={status} size="sm" />
                         <div>
-                          <h3 className="text-sm font-semibold tracking-wide uppercase">
+                          <h3 className="text-base font-semibold">
                             {acc.accountName}
                           </h3>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-sm text-muted-foreground">
                             {acc.siteOrApp}
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         <span
-                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
+                          className={`rounded-full border px-3 py-1 text-sm font-semibold ${
                             risk === "high"
-                              ? "bg-destructive/10 text-destructive"
+                              ? "border-red-800 bg-red-700 text-white dark:border-red-300 dark:bg-red-300 dark:text-neutral-950"
                               : risk === "medium"
-                                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                ? "border-amber-800 bg-amber-700 text-white dark:border-amber-300 dark:bg-amber-300 dark:text-neutral-950"
+                                : "border-emerald-800 bg-emerald-700 text-white dark:border-emerald-300 dark:bg-emerald-300 dark:text-neutral-950"
                           }`}
                         >
-                          {risk}
+                          {risk[0].toUpperCase() + risk.slice(1)} risk
                         </span>
                         <span
-                          className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                          className={`rounded-full border px-3 py-1 text-sm font-semibold ${
                             hasWarnings
-                              ? "bg-destructive/10 text-destructive"
-                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                              ? status === "danger"
+                                ? "border-red-800 bg-red-700 text-white dark:border-red-300 dark:bg-red-300 dark:text-neutral-950"
+                                : "border-amber-800 bg-amber-700 text-white dark:border-amber-300 dark:bg-amber-300 dark:text-neutral-950"
+                              : "border-emerald-800 bg-emerald-700 text-white dark:border-emerald-300 dark:bg-emerald-300 dark:text-neutral-950"
                           }`}
                         >
                           {hasWarnings
@@ -269,7 +271,7 @@ export function PasswordHealth() {
                         {acc.warnings.map((w, i) => (
                           <div
                             key={i}
-                            className="flex items-start gap-2 rounded-md bg-destructive/10 p-2.5 text-xs text-destructive"
+                            className="flex items-start gap-2 rounded-md bg-destructive/10 p-2.5 text-sm text-destructive"
                           >
                             <AlertTriangle
                               className="mt-0.5 size-4 shrink-0"
@@ -293,8 +295,8 @@ export function PasswordHealth() {
 
       <Card className="overflow-visible">
         <CardHeader>
-          <CardTitle className="text-base">Tag Existing Account</CardTitle>
-          <CardDescription className="text-xs">
+          <CardTitle className="text-base">Tag existing account</CardTitle>
+          <CardDescription className="text-sm">
             Choose a saved account to prioritize its security warnings.
           </CardDescription>
         </CardHeader>
@@ -372,7 +374,7 @@ export function PasswordHealth() {
                         <span className="block font-medium">
                           {credential.accountName}
                         </span>
-                        <span className="block text-xs text-muted-foreground">
+                        <span className="block text-sm text-muted-foreground">
                           {credential.siteOrApp}
                         </span>
                       </li>
@@ -385,18 +387,18 @@ export function PasswordHealth() {
               <Label htmlFor="quick-risk-level">Risk level</Label>
               <select
                 id="quick-risk-level"
-                className="h-7 w-full rounded-md border border-input bg-input/20 px-2 text-xs outline-none dark:bg-input/30"
+                className="h-11 w-full rounded-md border border-input bg-input/20 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30 dark:bg-input/30"
                 value={riskLevel}
                 onChange={(e) => setRiskLevel(e.target.value as RiskLevel)}
               >
-                <option value="low">Low Risk</option>
-                <option value="medium">Medium Risk</option>
-                <option value="high">High Risk</option>
+                <option value="low">Low risk</option>
+                <option value="medium">Medium risk</option>
+                <option value="high">High risk</option>
               </select>
             </div>
             <Button
               type="submit"
-              className="h-7 px-4"
+              className="h-11 px-4 text-sm"
               disabled={busy || emptyVault}
             >
               <Plus className="size-3.5" aria-hidden="true" />
@@ -406,12 +408,12 @@ export function PasswordHealth() {
           {emptyVault ? (
             <p
               id="quick-account-hint"
-              className="mt-2 text-xs text-muted-foreground"
+              className="mt-2 text-sm text-muted-foreground"
             >
               Add a credential in the Vault before assigning a risk level.
             </p>
           ) : formError ? (
-            <p className="mt-2 text-xs text-destructive" role="alert">
+            <p className="mt-2 text-sm text-destructive" role="alert">
               {formError}
             </p>
           ) : null}

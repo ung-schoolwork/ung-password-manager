@@ -32,6 +32,8 @@ export interface IncomingShare extends ShareDetails {
 /** A share this account sent. */
 export interface OutgoingShare extends ShareDetails {
   toEmail: string
+  /** The vault id of the shared credential, or null for older shares. */
+  credentialId: string | null
 }
 
 async function sharesRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -71,7 +73,9 @@ async function sharesRequest<T>(path: string, init?: RequestInit): Promise<T> {
 export async function shareCredential(
   recipientEmail: string,
   credential: CredentialDraft,
-  expiresAt: Date | null = null
+  expiresAt: Date | null = null,
+  /** The vault id, so deleting the credential later ends this share. */
+  credentialId: string | null = null
 ): Promise<void> {
   await sharesRequest("", {
     method: "POST",
@@ -79,9 +83,34 @@ export async function shareCredential(
     body: JSON.stringify({
       recipientEmail,
       credential,
+      credentialId,
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
     }),
   })
+}
+
+/**
+ * Ends every share of a credential before it is deleted, so the people it
+ * was shared with lose their copy along with it.
+ */
+export async function endCredentialShares(credentialId: string): Promise<void> {
+  await sharesRequest(`?credentialId=${encodeURIComponent(credentialId)}`, {
+    method: "DELETE",
+  })
+}
+
+/** Whether a credential is still shared with anyone. */
+export function hasActiveShares(
+  outgoing: OutgoingShare[],
+  credentialId: string,
+  now: Date = new Date()
+): boolean {
+  return outgoing.some(
+    (share) =>
+      share.credentialId === credentialId &&
+      share.status === "active" &&
+      (share.expiresAt === null || new Date(share.expiresAt) > now)
+  )
 }
 
 export async function listShares(): Promise<{

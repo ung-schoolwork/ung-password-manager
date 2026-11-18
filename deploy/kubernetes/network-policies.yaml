@@ -1,0 +1,53 @@
+# Deny all inbound traffic in the namespace, then allow only:
+#   - the Cloudflare tunnel connector (and pods in this namespace) to the site
+#   - the site and the backup job to Mongo
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ung-password-manager
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ung-site-ingress
+  namespace: ung-password-manager
+spec:
+  podSelector:
+    matchLabels:
+      app: ung-site
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudflare-tunnel-ingress-controller
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ung-mongo-ingress
+  namespace: ung-password-manager
+spec:
+  podSelector:
+    matchLabels:
+      app: ung-mongo
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ung-site
+        - podSelector:
+            matchLabels:
+              app: ung-backup
+      ports:
+        - protocol: TCP
+          port: 27017

@@ -90,6 +90,8 @@ function fillLogin(
   siteOrApp: string
 ): FillOutcome {
   // Checked again here, at the moment of filling, in case the tab moved on.
+  // Only the top frame is filled: a page could embed another site in a frame,
+  // and the user can only judge the address they see in the address bar.
   if (window.top !== window || fillProblem(location.href, siteOrApp))
     return { refused: true }
   const { inputs, fields } = pageInputs()

@@ -22,9 +22,7 @@ export function CredentialCopyActions({
   password: string
 }) {
   const [copiedField, setCopiedField] = useState<CopyField | null>(null)
-  const [clearMessageText, setClearMessageText] = useState<string | null>(
-    null
-  )
+  const [clearMessageText, setClearMessageText] = useState<string | null>(null)
   const [copyFailed, setCopyFailed] = useState(false)
   // The last copy made from these buttons, so a clear message only shows for
   // a copy of ours.
@@ -39,7 +37,9 @@ export function CredentialCopyActions({
       onClipboardClear((copyId, result) => {
         const lastCopy = lastCopyRef.current
         if (lastCopy?.id !== copyId) return
-        lastCopyRef.current = null
+        // A failed clear is retried when the user returns to the tab, so keep
+        // listening for this copy until it ends one way or the other.
+        if (result !== "clear-failed") lastCopyRef.current = null
         setCopiedField(null)
         setClearMessageText(
           clipboardClearMessage(FIELD_LABELS[lastCopy.field], result)
@@ -106,7 +106,7 @@ function CopyButton({
 
   return (
     <Button
-      className="h-9 px-3 text-sm"
+      className="h-11 px-3 text-sm"
       type="button"
       variant="outline"
       aria-label={`Copy ${field}`}

@@ -9,6 +9,7 @@ import {
 import { parseWrappedVaultKey } from "@/lib/vault/remote"
 import type { WrappedVaultKey } from "@/lib/vault/types"
 import { isAllowedOrigin } from "@/lib/auth/origin"
+import { readJsonObject } from "@/lib/http/json-body"
 import {
   reportSourceProblem,
   resolveSourceAddress,
@@ -17,12 +18,17 @@ import {
 export const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000
 export const SESSION_COOKIE =
   process.env.NODE_ENV === "production" ? "__Host-ung_session" : "ung_session"
+// An email, a 64-hex auth key and a wrapped vault key fit well under this.
+const MAX_ACCOUNT_BODY_BYTES = 4096
 const LIMIT_WINDOW_MS = 15 * 60 * 1000
 const LIMITS = { global: 1000, source: 120, account: 10 } as const
 // The browser sends an auth key derived from the password, never the password.
 // It is still hashed so a database leak cannot be replayed as a login.
 const HASH_PREFIX = "scrypt-v1$" // N=32768, r=8, p=3, 64 bytes; changing parameters requires a new version.
 const HASH_OPTIONS = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 }
+// Each scrypt hash holds 32 MiB (128 * N * r bytes) and a CPU core for a
+// while. Capping concurrent hashes keeps a burst of sign-ins from exhausting
+// the server; requests over the cap get a 429 and retry.
 const MAX_ACTIVE_HASHES = 2
 let activeHashes = 0
 
@@ -130,46 +136,17 @@ export interface AccountInput {
 export async function accountInput(
   request: Request
 ): Promise<AccountInput | null> {
-  if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
-    )
-  )
+  const body = await readJsonObject(request, MAX_ACCOUNT_BODY_BYTES)
+  if (!body) return null
+  const { email, authKey, wrappedVaultKey } = body
+  if (typeof email !== "string" || typeof authKey !== "string") return null
+  const normalized = normalizeAccountEmail(email)
+  if (!isValidAccountEmail(normalized) || !/^[0-9a-f]{64}$/.test(authKey))
     return null
-  const declared = request.headers.get("content-length")
-  if (declared && (!/^\d+$/.test(declared) || Number(declared) > 4096)) {
-    await request.body?.cancel().catch(() => undefined)
-    return null
-  }
-  if (!request.body) return null
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > 4096) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-    if (!body || typeof body !== "object" || Array.isArray(body)) return null
-    const { email, authKey, wrappedVaultKey } = body as Record<string, unknown>
-    if (typeof email !== "string" || typeof authKey !== "string") return null
-    const normalized = normalizeAccountEmail(email)
-    if (!isValidAccountEmail(normalized) || !/^[0-9a-f]{64}$/.test(authKey))
-      return null
-    return {
-      email: normalized,
-      authKey,
-      wrappedVaultKey: parseWrappedVaultKey(wrappedVaultKey),
-    }
-  } finally {
-    reader.releaseLock()
+  return {
+    email: normalized,
+    authKey,
+    wrappedVaultKey: parseWrappedVaultKey(wrappedVaultKey),
   }
 }
 
@@ -188,6 +165,9 @@ export async function hashAuthKey(authKey: string, salt: string) {
     activeHashes--
   }
 }
+// An unknown email is checked against a dummy salt and an all-zero hash, so it
+// still costs a full scrypt and a constant-time compare. Otherwise the response
+// time would reveal which emails have accounts.
 const dummySalt = "00000000000000000000000000000000"
 export async function validAuthKey(
   authKey: string,
@@ -223,6 +203,12 @@ export function sourceAddress(request: Request) {
 export function sourceUnavailable() {
   return json({ error: AUTH_SOURCE_UNAVAILABLE }, 503)
 }
+/**
+ * Counts one attempt against `key` in a fixed 15-minute window. Each step is a
+ * single atomic update (bump a live window, else restart an expired one, else
+ * create), so concurrent requests can never both start from zero. Keys are
+ * stored as digests so the collection holds no emails or IP addresses.
+ */
 export async function increment(key: string, now: Date) {
   const expiresAt = new Date(now.getTime() + LIMIT_WINDOW_MS)
   const filter = { key: digest(key) }
@@ -262,7 +248,10 @@ export async function limited(request: Request, email: string) {
   const source = sourceAddress(request)
   if (!source) return { invalidSource: true as const }
   const now = new Date()
-  // Register and login share budgets. A source cannot lock an account out from another source.
+  // Register and login share budgets. The global cap bounds total hashing work
+  // during a distributed attack, the source cap slows one client, and the
+  // account cap is per source and account: guessing one account is stopped,
+  // but an attacker cannot lock the owner out from the owner's own network.
   for (const [key, cap] of [
     ["global", LIMITS.global],
     [`source:${source}`, LIMITS.source],

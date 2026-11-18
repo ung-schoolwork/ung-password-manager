@@ -1,6 +1,9 @@
 import { randomInt } from "node:crypto"
 
-import { expect as playwrightExpect, test as playwrightTest } from "@playwright/test"
+import {
+  expect as playwrightExpect,
+  test as playwrightTest,
+} from "@playwright/test"
 import type { BrowserContext } from "@playwright/test"
 
 export { playwrightExpect as expect }

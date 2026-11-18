@@ -8,6 +8,11 @@ export async function GET(request: Request) {
     const active = await activeSession(token)
     if (!active) return json({ error: "Not authenticated" }, 401)
     const { session, user } = active
-    return json({ user: { id: String(user._id), email: user.email }, expiresAt: session.expiresAt.toISOString() })
-  } catch { return failure() }
+    return json({
+      user: { id: String(user._id), email: user.email },
+      expiresAt: session.expiresAt.toISOString(),
+    })
+  } catch {
+    return failure()
+  }
 }

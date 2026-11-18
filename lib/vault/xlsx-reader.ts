@@ -49,8 +49,13 @@ export type XlsxReadOptions = {
   maxColumns?: number
 }
 
+// The file is unpacked in the user's browser tab, so every limit bounds the
+// memory and time a hostile or accidental file can take. A small upload can
+// still inflate to gigabytes (a zip bomb), hence a cap on each unpacked part.
 const DEFAULT_MAX_ENTRY_BYTES = 20 * 1024 * 1024
+// The import's row limit (MAX_IMPORT_ROWS in import-file.ts) plus the header.
 const DEFAULT_MAX_RECORDS = 5001
+// Credential sheets use a handful of columns; this caps work on very wide rows.
 const DEFAULT_MAX_COLUMNS = 64
 
 const SIG_LOCAL_HEADER = 0x04034b50

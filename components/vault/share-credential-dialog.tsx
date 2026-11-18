@@ -95,7 +95,8 @@ export function ShareCredentialDialog({
           password: credential.password,
           notes: credential.notes,
         },
-        expiresAt
+        expiresAt,
+        credential.id
       )
       setSharedUntil(expiresAt)
       setDone(true)

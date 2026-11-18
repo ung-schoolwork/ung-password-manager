@@ -1,5 +1,5 @@
 // How long a copied secret stays on the clipboard before it is cleared
-// automatically (SCRUM-24). NEXT_PUBLIC_CLIPBOARD_CLEAR_MS lets the browser
+// automatically. NEXT_PUBLIC_CLIPBOARD_CLEAR_MS lets the browser
 // tests shorten the wait; the value is clamped so a typo or an out-of-range
 // override cannot turn the clear off or fire it instantly.
 const DEFAULT_CLEAR_AFTER_MS = 15_000
@@ -18,7 +18,7 @@ function clearAfterMs() {
 
 const CLEAR_AFTER_MS = clearAfterMs()
 
-// One pending auto-clear for the whole page (SCRUM-54). Locking the vault,
+// One pending auto-clear for the whole page. Locking the vault,
 // signing out, opening Edit, or navigating away unmounts the copy buttons,
 // so the timer lives outside React and survives that unmount. A later copy
 // from any credential or from the generator replaces the pending clear
@@ -26,7 +26,7 @@ const CLEAR_AFTER_MS = clearAfterMs()
 // copied afterwards.
 //
 // The timer can outlive the vault, so it must never hold the copied value
-// itself (SCRUM-64): only a digest is kept, and nothing the timer closes over
+// itself: only a digest is kept, and nothing the timer closes over
 // may reference the plaintext. That includes callbacks from the component
 // that copied: a closure created in a component keeps the component's scope
 // (and its props, such as the password) alive. Components hear how a clear
@@ -38,7 +38,7 @@ let pendingClear: {
 } | null = null
 let copySequence = 0
 
-// How an auto-clear ended (SCRUM-38). Nothing is reported when the clipboard
+// How an auto-clear ended. Nothing is reported when the clipboard
 // no longer held our copy, because then there was nothing of ours to clear.
 //   cleared            the clipboard still held our copy and was emptied
 //   cleared-unchecked  the browser refused to let us read the clipboard, so it
@@ -57,6 +57,7 @@ function notify(copyId: number, result: ClipboardClearResult) {
 }
 
 function cancelPendingClear() {
+  disarmReturnRetry()
   if (!pendingClear) return
   clearTimeout(pendingClear.timer)
   pendingClear = null
@@ -77,7 +78,7 @@ async function digestOf(text: string): Promise<string> {
 const READ_TIMEOUT_MS = 2_000
 
 // Reads the clipboard for the auto-clear check, or rejects when it cannot be
-// read without asking the user (SCRUM-73). Chrome answers readText() on a site
+// read without asking the user. Chrome answers readText() on a site
 // that has not been granted clipboard access with a permission prompt, and the
 // read waits until that prompt is answered: the clear stalled and the password
 // stayed on the clipboard. So only read when access is already granted, and
@@ -116,6 +117,76 @@ async function readClipboardWithoutPrompt(): Promise<string> {
   }
 }
 
+// When the browser refuses to empty the clipboard (typically because the tab
+// is in the background), the clear is retried once the user returns to the
+// tab. Like the timer, the retry keeps only the digest, never the
+// copied value. A newer copy cancels it.
+let pendingRetry: { digest: string; sequence: number } | null = null
+
+// Chrome refuses clipboard writes while the page is hidden or another window
+// has focus. Such a refusal is expected and retried silently; only a refusal
+// while the user is on the page is reported.
+function userIsOnPage() {
+  if (typeof document === "undefined") return true
+  if (document.visibilityState === "hidden") return false
+  return typeof document.hasFocus !== "function" || document.hasFocus()
+}
+
+function retryOnReturn() {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden")
+    return
+  const retry = pendingRetry
+  disarmReturnRetry()
+  if (retry) void attemptClear(retry.sequence, retry.digest)
+}
+
+function armReturnRetry() {
+  if (typeof document === "undefined" || typeof window === "undefined") return
+  document.addEventListener("visibilitychange", retryOnReturn)
+  window.addEventListener("focus", retryOnReturn)
+}
+
+function disarmReturnRetry() {
+  pendingRetry = null
+  if (typeof document === "undefined" || typeof window === "undefined") return
+  document.removeEventListener("visibilitychange", retryOnReturn)
+  window.removeEventListener("focus", retryOnReturn)
+}
+
+// One attempt to clear the copy with this sequence number: only if the
+// clipboard still holds it, and never over a newer copy.
+async function attemptClear(sequence: number, digest: string): Promise<void> {
+  if (copySequence !== sequence) return
+
+  let checked = true
+  let stillOurs = true
+  try {
+    stillOurs = (await digestOf(await readClipboardWithoutPrompt())) === digest
+  } catch {
+    // Some browsers block reads. Clearing anyway is safer than leaving a
+    // credential sitting in the clipboard, but it may also remove something
+    // the user copied elsewhere, so the user is told.
+    checked = false
+  }
+
+  // A copy may have landed while the clipboard was being read.
+  if (copySequence !== sequence) return
+  pendingClear = null
+
+  if (!stillOurs) return
+
+  try {
+    await navigator.clipboard.writeText("")
+  } catch {
+    if (copySequence !== sequence) return
+    pendingRetry = { digest, sequence }
+    armReturnRetry()
+    if (userIsOnPage()) notify(sequence, "clear-failed")
+    return
+  }
+  notify(sequence, checked ? "cleared" : "cleared-unchecked")
+}
+
 // Calls `listener` with the copy's id (as returned by copyWithAutoClear) and
 // the outcome each time an auto-clear runs for a copy that was still on the
 // clipboard (or could not be checked). Returns a function that stops
@@ -144,37 +215,7 @@ export async function copyWithAutoClear(value: string): Promise<number> {
   // A newer copy may have landed while hashing; it owns the clipboard now.
   if (sequence !== copySequence) return sequence
 
-  const timer = setTimeout(async () => {
-    if (pendingClear?.sequence !== sequence) return
-
-    // Only clear if the clipboard still holds what we copied — the user may
-    // have copied something else in the meantime (SCRUM-24 AC).
-    let checked = true
-    let stillOurs = true
-    try {
-      stillOurs =
-        (await digestOf(await readClipboardWithoutPrompt())) === digest
-    } catch {
-      // Some browsers block reads. Clearing anyway is safer than leaving a
-      // credential sitting in the clipboard, but it may also remove something
-      // the user copied elsewhere, so the user is told (SCRUM-38).
-      checked = false
-    }
-
-    // A copy may have landed while the clipboard was being read.
-    if (pendingClear?.sequence !== sequence) return
-    pendingClear = null
-
-    if (!stillOurs) return
-
-    try {
-      await navigator.clipboard.writeText("")
-    } catch {
-      notify(sequence, "clear-failed")
-      return
-    }
-    notify(sequence, checked ? "cleared" : "cleared-unchecked")
-  }, CLEAR_AFTER_MS)
+  const timer = setTimeout(() => attemptClear(sequence, digest), CLEAR_AFTER_MS)
 
   pendingClear = { timer, digest, sequence }
   return sequence

@@ -19,10 +19,18 @@ import {
 } from "@/lib/vault/types"
 import { parseVaultData } from "@/lib/vault/validation"
 
+// OWASP's 2023 recommendation for PBKDF2-HMAC-SHA256. Changing it changes every
+// derived key, so existing accounts could no longer sign in.
 export const PBKDF2_ITERATIONS = 600_000
+// The salt is built from the email so every client derives the same keys from
+// what the user types, without first asking the server for a per-account salt.
+// The prefix keeps these derivations apart from any other use of the password.
 const ACCOUNT_SALT_PREFIX = "ung-password-manager:account:v1:"
 const AUTH_KEY_INFO = "ung-password-manager:auth-key:v1"
 const WRAPPING_KEY_INFO = "ung-password-manager:vault-wrapping-key:v1"
+// AES-GCM's standard 96-bit nonce. A fresh random IV is drawn for every
+// encryption: reusing one under the same key breaks GCM's confidentiality and
+// lets an attacker forge ciphertexts.
 const IV_BYTES = 12
 
 const encoder = new TextEncoder()
@@ -67,6 +75,8 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer
 }
 
+// No HKDF salt is needed: the input is already a uniformly random PBKDF2
+// output. The distinct `info` strings are what keep the two keys independent.
 function hkdf(info: string) {
   return {
     name: "HKDF",
@@ -146,13 +156,21 @@ export async function createWrappedVaultKey(
 ): Promise<WrappedVaultKey> {
   const vaultKey = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 },
+    // wrapKey can only export an extractable key. This copy is dropped once
+    // wrapped; the key used day to day is unwrapped as non-extractable.
     true,
     ["encrypt", "decrypt"]
   )
   return wrapVaultKey(vaultKey, wrappingKey)
 }
 
-/** Recovers the vault key. Throws VaultUnlockError for a wrong password. */
+/**
+ * Recovers the vault key. Throws VaultUnlockError for a wrong password.
+ *
+ * The key is non-extractable by default, so script running in the page cannot
+ * export the raw vault key. Only a password change asks for an extractable key,
+ * because re-wrapping it under the new password has to export it.
+ */
 export async function unwrapVaultKey(
   wrappingKey: CryptoKey,
   wrapped: WrappedVaultKey,

@@ -1,0 +1,82 @@
+# Daily mongodump of the app database to a PVC on the worker node, verified
+# with a dry-run restore. Keeps the newest 14 archives.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ung-mongo-backups
+  namespace: ung-password-manager
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ung-mongo-backup
+  namespace: ung-password-manager
+spec:
+  schedule: '37 3 * * *'
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: ung-backup
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/hostname: threaderipper-server-nvme
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: mongo:8@sha256:5d7043a4ffe02b9ed1b6e0bab057546981af5ca0a79107e9c461e49bc44c0a7b
+              imagePullPolicy: IfNotPresent
+              command: [sh, -ec]
+              args:
+                - |
+                  archive="/backup/ung-password-manager-$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
+                  mongodump --uri "$MONGODB_URI" --archive="$archive" --gzip --quiet
+                  test -s "$archive"
+                  mongorestore --uri "$MONGODB_URI" --archive="$archive" --gzip --dryRun --quiet
+                  ls -1t /backup/*.archive.gz | tail -n +15 | xargs -r rm -f --
+                  printf 'backup_verified_bytes=%s\n' "$(wc -c < "$archive")"
+              env:
+                - name: MONGODB_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: ung-site
+                      key: MONGODB_URI
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: '1'
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: ung-mongo-backups

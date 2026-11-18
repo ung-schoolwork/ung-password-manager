@@ -13,7 +13,11 @@ import {
 export const DEVICE_COOKIE =
   process.env.NODE_ENV === "production" ? "__Host-ung_device" : "ung_device"
 const DEVICE_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
+// A pending code is short-lived, and approval attempts are capped per account
+// (see app/api/devices/approve), so guessing an 8-digit code is impractical.
 const CODE_LIFETIME_MS = 10 * 60 * 1000
+// "Last seen" is shown to the owner, not used for security, so it is written
+// at most once a minute instead of on every vault request.
 const LAST_SEEN_GRANULARITY_MS = 60 * 1000
 // How many accounts one browser remembers. Adding one more drops the token of
 // the account that was added to this browser longest ago.
@@ -21,6 +25,8 @@ const MAX_DEVICE_TOKENS = 8
 
 interface StoredDevice {
   ownerId: string
+  // Only a SHA-256 digest of the cookie token is stored, so a database leak
+  // cannot be replayed as an approved device.
   tokenDigest: string
   name: string
   approved: boolean
@@ -125,6 +131,7 @@ export function setDeviceCookie(response: NextResponse, value: string) {
   })
 }
 
+// randomInt draws from the OS CSPRNG, so codes cannot be predicted.
 function newCode() {
   return String(randomInt(0, 10 ** DEVICE_CODE_LENGTH)).padStart(
     DEVICE_CODE_LENGTH,
@@ -284,6 +291,8 @@ export async function listDevices(
   }))
 }
 
+// One atomic update finds and approves the device, so a code approves exactly
+// one device, once, and only within this account and before it expires.
 export async function approvePendingDevice(ownerId: string, code: string) {
   await connectDevices()
   const device = await Device.findOneAndUpdate(
@@ -353,35 +362,5 @@ export async function removeDevice(
   } finally {
     // Releases only this request's lock; a lock left behind expires on its own.
     await RemovalLock.deleteOne({ _id: ownerId, holder }).catch(() => undefined)
-  }
-}
-
-export async function readSmallJson(request: Request): Promise<unknown> {
-  if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
-    ) ||
-    !request.body
-  )
-    return null
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > 1024) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
-  } catch {
-    return null
-  } finally {
-    reader.releaseLock()
   }
 }

@@ -226,8 +226,18 @@ describe("real MongoDB auth routes", () => {
         duplex: "half",
       } as RequestInit)
     )
-    assert.equal(broken.status, 503)
+    // A body the client never finished sending is a bad request, and the
+    // stream's own error message stays on the server.
+    assert.equal(broken.status, 400)
     assert.ok(!(await broken.text()).includes("private stream failure"))
+    const malformed = await login(
+      new Request(origin, {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: "{not json",
+      })
+    )
+    assert.equal(malformed.status, 400)
     assert.equal(
       (await register(post(email, password, source, null))).status,
       403
