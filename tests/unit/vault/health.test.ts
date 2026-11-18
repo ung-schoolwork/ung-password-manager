@@ -246,11 +246,23 @@ describe("passphrases", () => {
 
   it("does not flag generated passphrases as weak or short", () => {
     const words4 = [...words]
+    // Seeded so a rare chance repeat in a four-word phrase cannot make the
+    // test flaky; repeated words are covered by the tests below.
+    let seed = 78
+    const seededIndex = (upperExclusive: number) => {
+      // mulberry32
+      seed = (seed + 0x6d2b79f5) | 0
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      const unit = ((t ^ (t >>> 14)) >>> 0) / 2 ** 32
+      return Math.floor(unit * upperExclusive)
+    }
     for (const separator of ["-", " ", ".", "_", ",", ""] as const) {
       for (let round = 0; round < 25; round++) {
         const password = generatePassphrase(
           { wordCount: 4, separator, capitalize: true, includeNumber: true },
-          words4
+          words4,
+          seededIndex
         )
         const [report] = analyzeCredentialsHealth(
           [credential(`pp-${separator}-${round}`, { password })],
@@ -329,6 +341,30 @@ describe("passphrases", () => {
       )
     ).toBe(false)
     expect(distinct.warnings).toEqual([])
+  })
+
+  it("allows a chance repeat when enough different words remain", () => {
+    const reports = analyzeCredentialsHealth(
+      [
+        // Five words with one repeat still have four different words.
+        credential("chance", { password: "morbidly-oak-ivy-morbidly-fox" }),
+        // Three different words are below the passphrase threshold.
+        credential("few", { password: "oak-ivy-oak-ivy-fox" }),
+        // One word three times is flagged even in a long passphrase.
+        credential("thrice", { password: "oak-ivy-oak-elm-oak-fox-pug" }),
+      ],
+      words
+    )
+    const repeatWarning = (id: string) =>
+      reports
+        .find((report) => report.id === id)!
+        .warnings.find((warning) =>
+          warning.explanation.includes("repeats the word")
+        )
+
+    expect(repeatWarning("chance")).toBeUndefined()
+    expect(repeatWarning("few")?.explanation).toContain('"oak"')
+    expect(repeatWarning("thrice")?.explanation).toContain('"oak"')
   })
 
   it("still flags other weak passwords and repeated passphrases", () => {

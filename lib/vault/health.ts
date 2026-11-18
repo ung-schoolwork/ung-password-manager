@@ -191,14 +191,25 @@ function parsePassphraseWords(
   return best
 }
 
-function repeatedPassphraseWord(parsed: string[] | null): string | null {
+// The generator draws each word independently, so a long passphrase can repeat
+// a word by chance and still be strong. Only flag repetition that leaves too
+// few different words to reach the passphrase threshold, or one word used
+// three or more times. Returns the most repeated word, or null.
+function weakRepeatedPassphraseWord(parsed: string[] | null): string | null {
   if (!parsed) return null
-  const seen = new Set<string>()
-  for (const word of parsed) {
-    if (seen.has(word)) return word
-    seen.add(word)
+
+  const counts = new Map<string, number>()
+  for (const word of parsed) counts.set(word, (counts.get(word) ?? 0) + 1)
+  if (counts.size === parsed.length) return null
+
+  let mostRepeated = parsed[0]
+  for (const [word, count] of counts) {
+    if (count > (counts.get(mostRepeated) ?? 0)) mostRepeated = word
   }
-  return null
+
+  const distinctBits = counts.size * PASSPHRASE_BITS_PER_WORD
+  const usedThrice = (counts.get(mostRepeated) ?? 0) >= 3
+  return distinctBits < PASSPHRASE_MIN_BITS || usedThrice ? mostRepeated : null
 }
 
 // `passphraseWords` is the EFF word list as a set. Without it, passphrases are
@@ -247,7 +258,7 @@ export function analyzeCredentialsHealth(
         const isStrongPassphrase =
           (parsedPassphrase?.length ?? 0) * PASSPHRASE_BITS_PER_WORD >=
           PASSPHRASE_MIN_BITS
-        const repeatedWord = repeatedPassphraseWord(parsedPassphrase)
+        const repeatedWord = weakRepeatedPassphraseWord(parsedPassphrase)
 
         // --- Check 1: length --------------------------------------------------
         // `else if` makes these mutually exclusive: a 5-char password gets
