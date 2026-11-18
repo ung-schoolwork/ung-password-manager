@@ -6,30 +6,37 @@ import { loadPassphraseWords } from "@/lib/password-generator"
 
 let wordSet: ReadonlySet<string> | null = null
 
+type PassphraseWordSetState =
+  | { status: "loading"; words: null }
+  | { status: "ready"; words: ReadonlySet<string> }
+  | { status: "error"; words: null }
+
 // The EFF word list as a set, for recognising passphrases in health checks.
-// Null until the list has loaded; health checks treat passphrases like any
-// other password until then.
-export function usePassphraseWordSet(): ReadonlySet<string> | null {
-  const [words, setWords] = useState(wordSet)
+export function usePassphraseWordSet(): PassphraseWordSetState {
+  const [state, setState] = useState<PassphraseWordSetState>(() =>
+    wordSet
+      ? { status: "ready", words: wordSet }
+      : { status: "loading", words: null }
+  )
 
   useEffect(() => {
-    if (words) return
+    if (state.status !== "loading") return
     let cancelled = false
 
     loadPassphraseWords().then(
       (list) => {
         wordSet ??= new Set(list)
-        if (!cancelled) setWords(wordSet)
+        if (!cancelled) setState({ status: "ready", words: wordSet })
       },
       () => {
-        // Without the list, health checks fall back to the general rules.
+        if (!cancelled) setState({ status: "error", words: null })
       }
     )
 
     return () => {
       cancelled = true
     }
-  }, [words])
+  }, [state.status])
 
-  return words
+  return state
 }

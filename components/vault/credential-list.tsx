@@ -45,10 +45,13 @@ export function CredentialList({
   onEditCredential(credential: Credential): void
   editingCredentialId: string | null
 }) {
-  const passphraseWords = usePassphraseWordSet()
+  const passphraseWordSet = usePassphraseWordSet()
   const audited = useMemo(
-    () => analyzeCredentialsHealth(credentials, passphraseWords),
-    [credentials, passphraseWords]
+    () =>
+      analyzeCredentialsHealth(credentials, passphraseWordSet.words, {
+        passphraseWordsLoading: passphraseWordSet.status === "loading",
+      }),
+    [credentials, passphraseWordSet]
   )
   const [credentialToShare, setCredentialToShare] = useState<Credential | null>(
     null

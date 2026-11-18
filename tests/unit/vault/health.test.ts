@@ -280,6 +280,57 @@ describe("passphrases", () => {
     expect(withList.warnings).toEqual([])
   })
 
+  it("does not show a short warning while passphrase words are loading", () => {
+    const password = "OakIvyElmFox"
+    const [loading] = analyzeCredentialsHealth(
+      [credential("loading", { password })],
+      null,
+      { passphraseWordsLoading: true }
+    )
+    const [loaded] = analyzeCredentialsHealth(
+      [credential("loaded", { password })],
+      words
+    )
+    const [failed] = analyzeCredentialsHealth([
+      credential("failed", { password }),
+    ])
+
+    expect(loading.warnings.some((warning) => warning.type === "Short")).toBe(
+      false
+    )
+    expect(loaded.warnings.some((warning) => warning.type === "Short")).toBe(
+      false
+    )
+    expect(failed.warnings.some((warning) => warning.type === "Short")).toBe(
+      true
+    )
+  })
+
+  it("flags repeated passphrase words but not distinct words", () => {
+    const reports = analyzeCredentialsHealth(
+      [
+        credential("repeated", { password: "Oak-IVY-oak-Fox" }),
+        credential("distinct", { password: "Oak-Ivy-Elm-Fox" }),
+      ],
+      words
+    )
+    const repeated = reports.find((report) => report.id === "repeated")!
+    const distinct = reports.find((report) => report.id === "distinct")!
+    const repeatedWarning = repeated.warnings.find(
+      (warning) =>
+        warning.type === "Weak" &&
+        warning.explanation.includes("repeats the word")
+    )
+
+    expect(repeatedWarning?.explanation).toContain('"oak"')
+    expect(
+      distinct.warnings.some((warning) =>
+        warning.explanation.includes("repeats the word")
+      )
+    ).toBe(false)
+    expect(distinct.warnings).toEqual([])
+  })
+
   it("still flags other weak passwords and repeated passphrases", () => {
     const reports = analyzeCredentialsHealth(
       [
