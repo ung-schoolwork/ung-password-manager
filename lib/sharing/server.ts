@@ -11,15 +11,13 @@ import type { CredentialDraft } from "@/lib/vault/types"
 const CIPHER_ALGORITHM = "aes-256-gcm"
 const IV_BYTES = 12
 
-// Known trade-off (SCRUM-21): credential sharing is NOT end-to-end encrypted
-// like the rest of the vault. The browser sends the credential to the server
-// in plaintext over HTTPS, and the server encrypts it at rest with a single
-// shared symmetric key (SHARE_ENCRYPTION_KEY) before storing it. Anyone with
-// that key, or server-side code execution, can decrypt any active share.
-// This was accepted for this sprint to ship credential sharing on schedule.
-// A true end-to-end design would need per-account asymmetric keypairs so the
-// browser can encrypt directly to the recipient's public key; that is
-// tracked as follow-up work, not part of this story.
+// Known trade-off: credential sharing is NOT end-to-end encrypted like the
+// rest of the vault. The browser sends the credential to the server over
+// HTTPS, and the server encrypts it at rest with one symmetric key
+// (SHARE_ENCRYPTION_KEY) before storing it. Anyone with that key, or with code
+// execution on the server, can decrypt any active share. End-to-end sharing
+// would need a key pair per account, so the browser could encrypt straight to
+// the recipient's public key.
 
 export class RecipientNotFoundError extends Error {
   constructor() {
@@ -63,6 +61,9 @@ function shareKey(): Buffer {
   return key
 }
 
+// Stored as base64(iv | 16-byte GCM tag | ciphertext). The tag makes a record
+// altered in the database fail to decrypt instead of yielding a changed
+// credential. Every call draws a new IV, since GCM must never reuse one.
 function encryptJson(value: unknown): string {
   const iv = randomBytes(IV_BYTES)
   const cipher = createCipheriv(CIPHER_ALGORITHM, shareKey(), iv)
@@ -162,7 +163,13 @@ function activeFilter(now: Date) {
   }
 }
 
-/** Removes the credential from every share whose end date has passed. */
+/**
+ * Removes the credential from every share whose end date has passed.
+ *
+ * End dates are enforced when shares are listed or read, not by a background
+ * job. Deleting the encrypted credential, not just hiding it, means an ended
+ * share cannot leak later through another bug or a database copy.
+ */
 async function wipeExpired(now: Date, scope: Record<string, unknown>) {
   await Share.updateMany(
     {
@@ -194,6 +201,8 @@ export function isCredentialId(value: unknown): value is string {
   return typeof value === "string" && CREDENTIAL_ID_PATTERN.test(value)
 }
 
+// A malformed ID is answered like a missing share, so the route returns 404
+// instead of failing on Mongo's cast error.
 function idFilter(shareId: string) {
   if (!mongoose.isValidObjectId(shareId)) throw new ShareNotFoundError()
   return { _id: shareId }
