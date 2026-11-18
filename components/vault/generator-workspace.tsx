@@ -31,7 +31,9 @@ export function GeneratorWorkspace() {
     () =>
       onClipboardClear((copyId, result) => {
         if (lastCopyIdRef.current !== copyId) return
-        lastCopyIdRef.current = null
+        // A failed clear is retried when the user returns to the tab, so keep
+        // listening for this copy until it ends one way or the other.
+        if (result !== "clear-failed") lastCopyIdRef.current = null
         setClearNotice(
           clipboardClearMessage(
             lastCopyKindRef.current === "passphrase"
