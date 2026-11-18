@@ -29,11 +29,12 @@ function VaultScreen({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const settingsPage =
     pathname === "/settings" || pathname.startsWith("/settings/")
-  // Settings manages the account and its approved devices, so it does not
-  // need the vault itself to be unlocked.
-  const settingsAvailable = settingsPage && status === "locked"
+  // Settings manages the account and its approved devices, and the extension
+  // page only offers a download, so neither needs the vault to be unlocked.
+  const availableWhileLocked =
+    (settingsPage || pathname === "/extension") && status === "locked"
 
-  if (status !== "unlocked" && !settingsAvailable) return <VaultGate />
+  if (status !== "unlocked" && !availableWhileLocked) return <VaultGate />
 
   return <VaultShell showLock={status === "unlocked"}>{children}</VaultShell>
 }

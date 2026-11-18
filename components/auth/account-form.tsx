@@ -248,6 +248,16 @@ export function AccountForm({ mode }: { mode: "login" | "register" }) {
               {registering ? "Sign in" : "Create an account"}
             </Link>
           </p>
+          {registering ? null : (
+            <p className="mt-2 text-center text-sm text-muted-foreground">
+              <Link
+                className="underline underline-offset-4 hover:text-foreground"
+                href="/extension"
+              >
+                Get the Chrome extension
+              </Link>
+            </p>
+          )}
         </CardContent>
       </Card>
     </main>

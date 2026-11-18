@@ -5,9 +5,12 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { useVault } from "@/components/vault/vault-provider"
+import { hasActiveShares, listShares } from "@/lib/sharing/client"
 import type { Credential } from "@/lib/vault/types"
 
 // Deleting asks once more before the credential is removed from the vault.
+// Deleting also ends every share of it, so the question says so when the
+// credential is shared.
 export function DeleteCredentialSection({
   credential,
   onDeleted,
@@ -18,6 +21,18 @@ export function DeleteCredentialSection({
   const { removeCredential, busy } = useVault()
   const [confirming, setConfirming] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [shared, setShared] = useState(false)
+
+  function askToConfirm() {
+    setConfirming(true)
+    setShared(false)
+    listShares()
+      .then(({ outgoing }) =>
+        setShared(hasActiveShares(outgoing, credential.id))
+      )
+      // Shares still end on delete; only the extra sentence is skipped.
+      .catch(() => undefined)
+  }
 
   async function confirmDelete() {
     setMessage(null)
@@ -43,6 +58,7 @@ export function DeleteCredentialSection({
         >
           <p id="delete-credential-question" className="text-sm">
             Delete {credential.accountName}? This can’t be undone.
+            {shared ? " People you shared this with will lose access." : null}
           </p>
           <div className="grid grid-cols-2 gap-2">
             <Button
@@ -75,7 +91,7 @@ export function DeleteCredentialSection({
           type="button"
           variant="destructive"
           disabled={busy}
-          onClick={() => setConfirming(true)}
+          onClick={askToConfirm}
         >
           <Trash2 className="size-4" aria-hidden="true" />
           Delete credential

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { ChevronDown, Settings } from "lucide-react"
+import { ChevronDown, Puzzle, Settings } from "lucide-react"
 
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
@@ -37,14 +37,24 @@ export function AccountMenu({ email }: { email: string }) {
           <PopoverTitle>Signed in as</PopoverTitle>
           <PopoverDescription className="break-all">{email}</PopoverDescription>
         </div>
-        <Link
-          className={cn(buttonVariants({ variant: "outline" }), "h-9 w-full")}
-          href="/settings"
-          onClick={() => setOpen(false)}
-        >
-          <Settings className="size-4" aria-hidden="true" />
-          Settings
-        </Link>
+        <div className="grid gap-2">
+          <Link
+            className={cn(buttonVariants({ variant: "outline" }), "h-9 w-full")}
+            href="/settings"
+            onClick={() => setOpen(false)}
+          >
+            <Settings className="size-4" aria-hidden="true" />
+            Settings
+          </Link>
+          <Link
+            className={cn(buttonVariants({ variant: "outline" }), "h-9 w-full")}
+            href="/extension"
+            onClick={() => setOpen(false)}
+          >
+            <Puzzle className="size-4" aria-hidden="true" />
+            Chrome extension
+          </Link>
+        </div>
       </PopoverContent>
     </Popover>
   )
