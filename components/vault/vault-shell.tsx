@@ -54,10 +54,7 @@ export function VaultShell({
             </span>
           </Link>
 
-          <nav
-            className="basis-full sm:basis-auto"
-            aria-label="Primary navigation"
-          >
+          <nav className="basis-full sm:basis-auto" aria-label="Primary">
             <ul className="grid w-full grid-cols-2 gap-1 sm:flex sm:w-auto sm:items-center">
               {NAV_ITEMS.map((item) => {
                 const active =

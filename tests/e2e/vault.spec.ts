@@ -22,9 +22,7 @@ test("keeps vault navigation usable on phones and keyboard focus in order", asyn
   await page.getByLabel("Password", { exact: true }).fill("DemoPassword!234")
   await page.getByRole("button", { name: "Save credential" }).click()
 
-  const navigation = page.getByRole("navigation", {
-    name: "Primary navigation",
-  })
+  const navigation = page.getByRole("navigation", { name: "Primary" })
   const links = navigation.getByRole("link")
   await expect(links).toHaveCount(4)
 
