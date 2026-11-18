@@ -66,10 +66,13 @@ export function PasswordHealth() {
     activeOptionRef.current?.scrollIntoView({ block: "nearest" })
   }, [activeSuggestionIndex, suggestionsOpen])
 
-  const passphraseWords = usePassphraseWordSet()
+  const passphraseWordSet = usePassphraseWordSet()
   const auditedAccounts = useMemo(
-    () => analyzeCredentialsHealth(credentials, passphraseWords),
-    [credentials, passphraseWords]
+    () =>
+      analyzeCredentialsHealth(credentials, passphraseWordSet.words, {
+        passphraseWordsLoading: passphraseWordSet.status === "loading",
+      }),
+    [credentials, passphraseWordSet]
   )
   const accountsWithIssues = auditedAccounts.filter(
     (acc) => acc.warnings.length > 0

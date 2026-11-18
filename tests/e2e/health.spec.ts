@@ -437,3 +437,90 @@ test("saves a generated passphrase without health warnings", async ({
     })
   ).toBeVisible()
 })
+
+test("reports repeated passphrase words with a clear reason", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await unlockVault(page)
+
+  async function savePassphrase(accountName: string, password: string) {
+    await page.getByLabel("Account label").fill(accountName)
+    await page.getByLabel("Website or app").fill(`${accountName}.example.edu`)
+    await page
+      .getByLabel("Username", { exact: true })
+      .fill(`${accountName}@example.edu`)
+    await page.getByLabel("Password", { exact: true }).fill(password)
+    await page.getByRole("button", { name: "Save credential" }).click()
+    await expect(
+      page.getByRole("dialog", { name: "Add a credential" })
+    ).toHaveCount(0)
+  }
+
+  await savePassphrase("Repeated phrase", "Oak-Ivy-Oak-Fox")
+  await page.getByRole("button", { name: "Add credential" }).click()
+  await savePassphrase("Distinct phrase", "Oak-Ivy-Elm-Fox")
+  await page.getByRole("link", { name: "Health", exact: true }).click()
+
+  const reports = page.getByRole("list", { name: "Password health reports" })
+  const repeatedReport = reports
+    .getByRole("listitem")
+    .filter({ hasText: "Repeated phrase" })
+  const distinctReport = reports
+    .getByRole("listitem")
+    .filter({ hasText: "Distinct phrase" })
+
+  await expect(repeatedReport.getByText(/repeats the word "oak"/)).toBeVisible()
+  await expect(distinctReport.getByText(/repeats the word/)).toHaveCount(0)
+  await expect(
+    distinctReport.getByText("No warnings", { exact: true })
+  ).toBeVisible()
+})
+
+test("does not briefly label a short passphrase while its word list loads", async ({
+  page,
+}) => {
+  await page.goto("/")
+  await unlockVault(page)
+  await page.getByLabel("Account label").fill("Short phrase")
+  await page.getByLabel("Website or app").fill("short-phrase.example.edu")
+  await page.getByLabel("Username", { exact: true }).fill("short@example.edu")
+  await page.getByLabel("Password", { exact: true }).fill("OakIvyElmFox")
+  await page.getByRole("button", { name: "Save credential" }).click()
+  await expect(
+    page.getByRole("dialog", { name: "Add a credential" })
+  ).toHaveCount(0)
+
+  // A fresh page load starts without the word list. Record whether a "Short"
+  // warning is ever rendered, even for a single frame, before it arrives.
+  await page.addInitScript(() => {
+    const flags = window as unknown as { shortWarningSeen: boolean }
+    flags.shortWarningSeen = false
+    new MutationObserver(() => {
+      const reports = document.querySelector(
+        '[aria-label="Password health reports"]'
+      )
+      if (reports?.textContent?.includes("Short:")) {
+        flags.shortWarningSeen = true
+      }
+    }).observe(document, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
+  })
+  await page.goto("/health")
+  await unlockVault(page)
+
+  const report = page
+    .getByRole("list", { name: "Password health reports" })
+    .getByRole("listitem")
+    .filter({ hasText: "Short phrase" })
+  await expect(report.getByText("No warnings", { exact: true })).toBeVisible()
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { shortWarningSeen: boolean }).shortWarningSeen
+    )
+  ).toBe(false)
+})

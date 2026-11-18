@@ -132,23 +132,33 @@ export function passphraseWordCount(
   password: string,
   words: ReadonlySet<string>
 ): number {
+  return parsePassphraseWords(password, words)?.length ?? 0
+}
+
+function parsePassphraseWords(
+  password: string,
+  words: ReadonlySet<string>
+): string[] | null {
   const text = password.toLowerCase()
-  let best = 0
+  let best: string[] | null = null
 
   for (const { value: separator } of PASSPHRASE_SEPARATORS) {
-    const memo = new Map<number, number>()
+    const memo = new Map<number, string[] | null>()
 
-    // Most words that fill text[position..] starting with a word, or -1.
-    const wordsFrom = (position: number, digitUsed: boolean): number => {
+    // The longest list-word sequence that fills text[position..], or null.
+    const wordsFrom = (
+      position: number,
+      digitUsed: boolean
+    ): string[] | null => {
       const key = position * 2 + (digitUsed ? 1 : 0)
-      const cached = memo.get(key)
-      if (cached !== undefined) return cached
+      if (memo.has(key)) return memo.get(key) ?? null
 
-      let most = -1
+      let most: string[] | null = null
       for (let length = 1; length <= LONGEST_LIST_WORD; length++) {
         const end = position + length
         if (end > text.length) break
-        if (!words.has(text.slice(position, end))) continue
+        const word = text.slice(position, end)
+        if (!words.has(word)) continue
 
         const endings = [{ at: end, digitUsed }]
         if (!digitUsed && /[0-9]/.test(text.charAt(end))) {
@@ -157,13 +167,15 @@ export function passphraseWordCount(
 
         for (const ending of endings) {
           if (ending.at === text.length) {
-            most = Math.max(most, 1)
+            if (!most) most = [word]
           } else if (text.startsWith(separator, ending.at)) {
             const rest = wordsFrom(
               ending.at + separator.length,
               ending.digitUsed
             )
-            if (rest > 0) most = Math.max(most, rest + 1)
+            if (rest && (!most || rest.length + 1 > most.length)) {
+              most = [word, ...rest]
+            }
           }
         }
       }
@@ -172,17 +184,40 @@ export function passphraseWordCount(
       return most
     }
 
-    best = Math.max(best, wordsFrom(0, false))
+    const parsed = wordsFrom(0, false)
+    if (parsed && (!best || parsed.length > best.length)) best = parsed
   }
 
   return best
+}
+
+// The generator draws each word independently, so a long passphrase can repeat
+// a word by chance and still be strong. Only flag repetition that leaves too
+// few different words to reach the passphrase threshold, or one word used
+// three or more times. Returns the most repeated word, or null.
+function weakRepeatedPassphraseWord(parsed: string[] | null): string | null {
+  if (!parsed) return null
+
+  const counts = new Map<string, number>()
+  for (const word of parsed) counts.set(word, (counts.get(word) ?? 0) + 1)
+  if (counts.size === parsed.length) return null
+
+  let mostRepeated = parsed[0]
+  for (const [word, count] of counts) {
+    if (count > (counts.get(mostRepeated) ?? 0)) mostRepeated = word
+  }
+
+  const distinctBits = counts.size * PASSPHRASE_BITS_PER_WORD
+  const usedThrice = (counts.get(mostRepeated) ?? 0) >= 3
+  return distinctBits < PASSPHRASE_MIN_BITS || usedThrice ? mostRepeated : null
 }
 
 // `passphraseWords` is the EFF word list as a set. Without it, passphrases are
 // judged like any other password.
 export function analyzeCredentialsHealth(
   credentials: Credential[],
-  passphraseWords?: ReadonlySet<string> | null
+  passphraseWords?: ReadonlySet<string> | null,
+  options: { passphraseWordsLoading?: boolean } = {}
 ): CredentialHealthReport[] {
   // --- Pre-pass: group credentials by password ------------------------------
   // Map<password string, credentials using that password>.
@@ -212,15 +247,18 @@ export function analyzeCredentialsHealth(
         const warnings: PasswordWarning[] = []
         const pwd = cred.password
         const lowerPwd = pwd.toLowerCase() // used for the blocklist check
+        const parsedPassphrase =
+          passphraseWords == null
+            ? null
+            : parsePassphraseWords(pwd, passphraseWords)
 
         // A passphrase of random list words is scored by word count (about
         // 12.9 bits a word), not by its length or character mix. Only checks
         // 1 and 4 defer to it; the others still apply.
         const isStrongPassphrase =
-          passphraseWords != null &&
-          passphraseWordCount(pwd, passphraseWords) *
-            PASSPHRASE_BITS_PER_WORD >=
-            PASSPHRASE_MIN_BITS
+          (parsedPassphrase?.length ?? 0) * PASSPHRASE_BITS_PER_WORD >=
+          PASSPHRASE_MIN_BITS
+        const repeatedWord = weakRepeatedPassphraseWord(parsedPassphrase)
 
         // --- Check 1: length --------------------------------------------------
         // `else if` makes these mutually exclusive: a 5-char password gets
@@ -232,7 +270,10 @@ export function analyzeCredentialsHealth(
             type: "Weak",
             explanation: `This password has fewer than ${MIN_LENGTH} characters and may be easy to guess.`,
           })
-        } else if (pwd.length < RECOMMENDED_LENGTH) {
+        } else if (
+          pwd.length < RECOMMENDED_LENGTH &&
+          !options.passphraseWordsLoading
+        ) {
           warnings.push({
             type: "Short",
             explanation: `This password has fewer than ${RECOMMENDED_LENGTH} characters. Longer passwords are harder to guess.`,
@@ -246,6 +287,13 @@ export function analyzeCredentialsHealth(
           warnings.push({
             type: "Weak",
             explanation: "This matches a commonly used password.",
+          })
+        }
+
+        if (repeatedWord) {
+          warnings.push({
+            type: "Weak",
+            explanation: `This passphrase repeats the word "${repeatedWord}", making it easier to guess.`,
           })
         }
 
