@@ -1,5 +1,5 @@
 // How long a copied secret stays on the clipboard before it is cleared
-// automatically (SCRUM-24). NEXT_PUBLIC_CLIPBOARD_CLEAR_MS lets the browser
+// automatically. NEXT_PUBLIC_CLIPBOARD_CLEAR_MS lets the browser
 // tests shorten the wait; the value is clamped so a typo or an out-of-range
 // override cannot turn the clear off or fire it instantly.
 const DEFAULT_CLEAR_AFTER_MS = 15_000
@@ -18,7 +18,7 @@ function clearAfterMs() {
 
 const CLEAR_AFTER_MS = clearAfterMs()
 
-// One pending auto-clear for the whole page (SCRUM-54). Locking the vault,
+// One pending auto-clear for the whole page. Locking the vault,
 // signing out, opening Edit, or navigating away unmounts the copy buttons,
 // so the timer lives outside React and survives that unmount. A later copy
 // from any credential or from the generator replaces the pending clear
@@ -26,7 +26,7 @@ const CLEAR_AFTER_MS = clearAfterMs()
 // copied afterwards.
 //
 // The timer can outlive the vault, so it must never hold the copied value
-// itself (SCRUM-64): only a digest is kept, and nothing the timer closes over
+// itself: only a digest is kept, and nothing the timer closes over
 // may reference the plaintext. That includes callbacks from the component
 // that copied: a closure created in a component keeps the component's scope
 // (and its props, such as the password) alive. Components hear how a clear
@@ -38,7 +38,7 @@ let pendingClear: {
 } | null = null
 let copySequence = 0
 
-// How an auto-clear ended (SCRUM-38). Nothing is reported when the clipboard
+// How an auto-clear ended. Nothing is reported when the clipboard
 // no longer held our copy, because then there was nothing of ours to clear.
 //   cleared            the clipboard still held our copy and was emptied
 //   cleared-unchecked  the browser refused to let us read the clipboard, so it
@@ -78,7 +78,7 @@ async function digestOf(text: string): Promise<string> {
 const READ_TIMEOUT_MS = 2_000
 
 // Reads the clipboard for the auto-clear check, or rejects when it cannot be
-// read without asking the user (SCRUM-73). Chrome answers readText() on a site
+// read without asking the user. Chrome answers readText() on a site
 // that has not been granted clipboard access with a permission prompt, and the
 // read waits until that prompt is answered: the clear stalled and the password
 // stayed on the clipboard. So only read when access is already granted, and
@@ -119,13 +119,13 @@ async function readClipboardWithoutPrompt(): Promise<string> {
 
 // When the browser refuses to empty the clipboard (typically because the tab
 // is in the background), the clear is retried once the user returns to the
-// tab (SCRUM-76). Like the timer, the retry keeps only the digest, never the
+// tab. Like the timer, the retry keeps only the digest, never the
 // copied value. A newer copy cancels it.
 let pendingRetry: { digest: string; sequence: number } | null = null
 
 // Chrome refuses clipboard writes while the page is hidden or another window
 // has focus. Such a refusal is expected and retried silently; only a refusal
-// while the user is on the page is reported (SCRUM-76 AC).
+// while the user is on the page is reported.
 function userIsOnPage() {
   if (typeof document === "undefined") return true
   if (document.visibilityState === "hidden") return false
@@ -154,7 +154,7 @@ function disarmReturnRetry() {
 }
 
 // One attempt to clear the copy with this sequence number: only if the
-// clipboard still holds it (SCRUM-24 AC), and never over a newer copy.
+// clipboard still holds it, and never over a newer copy.
 async function attemptClear(sequence: number, digest: string): Promise<void> {
   if (copySequence !== sequence) return
 
@@ -165,7 +165,7 @@ async function attemptClear(sequence: number, digest: string): Promise<void> {
   } catch {
     // Some browsers block reads. Clearing anyway is safer than leaving a
     // credential sitting in the clipboard, but it may also remove something
-    // the user copied elsewhere, so the user is told (SCRUM-38).
+    // the user copied elsewhere, so the user is told.
     checked = false
   }
 
