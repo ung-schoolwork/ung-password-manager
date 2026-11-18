@@ -18,19 +18,10 @@ function clearAfterMs() {
 
 const CLEAR_AFTER_MS = clearAfterMs()
 
-// One pending auto-clear for the whole page. Locking the vault,
-// signing out, opening Edit, or navigating away unmounts the copy buttons,
-// so the timer lives outside React and survives that unmount. A later copy
-// from any credential or from the generator replaces the pending clear
-// instead of racing it, so an older timer can never wipe a value the user
-// copied afterwards.
-//
-// The timer can outlive the vault, so it must never hold the copied value
-// itself: only a digest is kept, and nothing the timer closes over
-// may reference the plaintext. That includes callbacks from the component
-// that copied: a closure created in a component keeps the component's scope
-// (and its props, such as the password) alive. Components hear how a clear
-// went through onClipboardClear instead, and stop listening when they unmount.
+// One page-wide auto-clear that lives outside React, so it survives the copy
+// button unmounting; a newer copy replaces it rather than racing it. The timer
+// can outlive the vault, so it keeps only a digest and never closes over the
+// plaintext or component callbacks (results go out via onClipboardClear).
 let pendingClear: {
   timer: ReturnType<typeof setTimeout>
   digest: string

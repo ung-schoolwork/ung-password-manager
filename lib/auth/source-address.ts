@@ -18,16 +18,9 @@ const DEVELOPMENT_SOURCE = "127.0.0.1"
 const MAX_HEADER_LENGTH = 1024
 
 /**
- * Reads the client IP from the header named by AUTH_TRUSTED_IP_HEADER.
- *
- * X-Forwarded-For is a chain that each proxy appends to, so only its
- * rightmost entry was written by the proxy directly in front of the app.
- * Everything to its left came from the client or an earlier hop and can be
- * forged, so the leftmost entry is never used. Every other header must hold
- * exactly one IP (CF-Connecting-IP, X-Real-IP, or a custom header the proxy
- * overwrites); a list there is rejected rather than guessed at.
- *
- * Anything missing or not an IP address fails closed.
+ * Reads the client IP from the header named by AUTH_TRUSTED_IP_HEADER. For
+ * X-Forwarded-For only the rightmost entry (set by our own proxy) is trusted;
+ * any other header must hold exactly one IP. Anything else fails closed.
  */
 export function resolveSourceAddress(
   headers: Headers,
