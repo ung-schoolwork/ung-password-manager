@@ -222,7 +222,8 @@ describe("copyWithAutoClear", () => {
     const copyId = await copyWithAutoClear("secret-one")
     clipboard.denyWrite = true
     await fire(timers.at(-1))
-    expect(results).toEqual([[copyId, "clear-failed"]])
+    // A refusal in a background tab is expected, so no error is reported.
+    expect(results).toEqual([])
 
     // Still in the background: nothing happens yet.
     doc.dispatchEvent(new Event("visibilitychange"))
@@ -235,10 +236,25 @@ describe("copyWithAutoClear", () => {
     await settle()
 
     expect(clipboard.text).toBe("")
-    expect(results).toEqual([
-      [copyId, "clear-failed"],
-      [copyId, "cleared"],
-    ])
+    expect(results).toEqual([[copyId, "cleared"]])
+  })
+
+  it("reports nothing when the clear is refused while another window has focus", async () => {
+    const { doc, win } = installPage()
+    let focused = false
+    Object.assign(doc, { hasFocus: () => focused })
+    const copyId = await copyWithAutoClear("secret-one")
+    clipboard.denyWrite = true
+    await fire(timers.at(-1))
+    expect(results).toEqual([])
+
+    clipboard.denyWrite = false
+    focused = true
+    win.dispatchEvent(new Event("focus"))
+    await settle()
+
+    expect(clipboard.text).toBe("")
+    expect(results).toEqual([[copyId, "cleared"]])
   })
 
   it("also retries a failed clear when the window regains focus", async () => {

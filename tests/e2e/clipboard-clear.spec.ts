@@ -609,26 +609,40 @@ test("retries a failed clear when the user returns to the tab", async ({
   await createVaultWithCredential(page)
   await copyPassword(page)
 
-  // Stand in for a browser that refuses the clear while the tab is in the
-  // background, then allows it again once the user is back.
+  // Stand in for a browser that refuses the clear while the user is in
+  // another window, then allows it again once the user is back.
   await page.evaluate(() => {
-    const w = window as unknown as { allowClear?: boolean }
+    const w = window as unknown as { away?: boolean; refusedClears?: number }
+    w.away = true
+    w.refusedClears = 0
+    const hasFocus = document.hasFocus.bind(document)
+    document.hasFocus = () => !w.away && hasFocus()
     const writeText = navigator.clipboard.writeText.bind(navigator.clipboard)
-    navigator.clipboard.writeText = (text: string) =>
-      text === "" && !w.allowClear
-        ? Promise.reject(new DOMException("Write denied", "NotAllowedError"))
-        : writeText(text)
+    navigator.clipboard.writeText = (text: string) => {
+      if (text !== "" || !w.away) return writeText(text)
+      w.refusedClears = (w.refusedClears ?? 0) + 1
+      return Promise.reject(
+        new DOMException("Document is not focused", "NotAllowedError")
+      )
+    }
   })
 
-  await expect(savedCredentialStatus(page)).toHaveText(
-    "Couldn't clear the password from your clipboard. Copy something else to replace it.",
-    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
-  )
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => (window as unknown as { refusedClears: number }).refusedClears
+        ),
+      { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+    )
+    .toBeGreaterThan(0)
+  // The refusal is expected while the user is away, so no error is shown.
+  await expect(savedCredentialStatus(page)).toHaveText("Password copied.")
   expect(await readClipboard(page)).toBe(credentialPassword)
 
   await page.evaluate(() => {
-    const w = window as unknown as { allowClear?: boolean }
-    w.allowClear = true
+    const w = window as unknown as { away?: boolean }
+    w.away = false
     window.dispatchEvent(new Event("focus"))
   })
 

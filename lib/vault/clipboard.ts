@@ -123,6 +123,15 @@ async function readClipboardWithoutPrompt(): Promise<string> {
 // copied value. A newer copy cancels it.
 let pendingRetry: { digest: string; sequence: number } | null = null
 
+// Chrome refuses clipboard writes while the page is hidden or another window
+// has focus. Such a refusal is expected and retried silently; only a refusal
+// while the user is on the page is reported (SCRUM-76 AC).
+function userIsOnPage() {
+  if (typeof document === "undefined") return true
+  if (document.visibilityState === "hidden") return false
+  return typeof document.hasFocus !== "function" || document.hasFocus()
+}
+
 function retryOnReturn() {
   if (typeof document !== "undefined" && document.visibilityState === "hidden")
     return
@@ -172,7 +181,7 @@ async function attemptClear(sequence: number, digest: string): Promise<void> {
     if (copySequence !== sequence) return
     pendingRetry = { digest, sequence }
     armReturnRetry()
-    notify(sequence, "clear-failed")
+    if (userIsOnPage()) notify(sequence, "clear-failed")
     return
   }
   notify(sequence, checked ? "cleared" : "cleared-unchecked")
@@ -206,10 +215,7 @@ export async function copyWithAutoClear(value: string): Promise<number> {
   // A newer copy may have landed while hashing; it owns the clipboard now.
   if (sequence !== copySequence) return sequence
 
-  const timer = setTimeout(
-    () => attemptClear(sequence, digest),
-    CLEAR_AFTER_MS
-  )
+  const timer = setTimeout(() => attemptClear(sequence, digest), CLEAR_AFTER_MS)
 
   pendingClear = { timer, digest, sequence }
   return sequence
