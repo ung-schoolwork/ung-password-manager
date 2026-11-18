@@ -39,7 +39,9 @@ export function CredentialCopyActions({
       onClipboardClear((copyId, result) => {
         const lastCopy = lastCopyRef.current
         if (lastCopy?.id !== copyId) return
-        lastCopyRef.current = null
+        // A failed clear is retried when the user returns to the tab, so keep
+        // listening for this copy until it ends one way or the other.
+        if (result !== "clear-failed") lastCopyRef.current = null
         setCopiedField(null)
         setClearMessageText(
           clipboardClearMessage(FIELD_LABELS[lastCopy.field], result)

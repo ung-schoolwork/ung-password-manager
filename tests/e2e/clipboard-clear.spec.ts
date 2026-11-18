@@ -602,3 +602,52 @@ test("the pending clear of a saved password does not keep it in memory after loc
 
   expect(await heldClearTimersReach(page, password)).toBe(false)
 })
+
+test("retries a failed clear when the user returns to the tab", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a browser that refuses the clear while the user is in
+  // another window, then allows it again once the user is back.
+  await page.evaluate(() => {
+    const w = window as unknown as { away?: boolean; refusedClears?: number }
+    w.away = true
+    w.refusedClears = 0
+    const hasFocus = document.hasFocus.bind(document)
+    document.hasFocus = () => !w.away && hasFocus()
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard)
+    navigator.clipboard.writeText = (text: string) => {
+      if (text !== "" || !w.away) return writeText(text)
+      w.refusedClears = (w.refusedClears ?? 0) + 1
+      return Promise.reject(
+        new DOMException("Document is not focused", "NotAllowedError")
+      )
+    }
+  })
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => (window as unknown as { refusedClears: number }).refusedClears
+        ),
+      { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+    )
+    .toBeGreaterThan(0)
+  // The refusal is expected while the user is away, so no error is shown.
+  await expect(savedCredentialStatus(page)).toHaveText("Password copied.")
+  expect(await readClipboard(page)).toBe(credentialPassword)
+
+  await page.evaluate(() => {
+    const w = window as unknown as { away?: boolean }
+    w.away = false
+    window.dispatchEvent(new Event("focus"))
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard."
+  )
+  await expect.poll(() => readClipboard(page)).toBe("")
+})

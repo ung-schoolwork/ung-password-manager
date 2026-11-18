@@ -1,0 +1,136 @@
+# Creates the app user (readWrite on ung_password_manager only) the first time
+# Mongo starts on an empty volume. The root user is for administration only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ung-mongo-init
+  namespace: ung-password-manager
+data:
+  create-app-user.js: |
+    db.getSiblingDB('ung_password_manager').createUser({
+      user: process.env.APP_DB_USER,
+      pwd: process.env.APP_DB_PASSWORD,
+      roles: [{ role: 'readWrite', db: 'ung_password_manager' }],
+    });
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ung-mongo
+  namespace: ung-password-manager
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: ung-mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ung-mongo
+  namespace: ung-password-manager
+spec:
+  serviceName: ung-mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ung-mongo
+  template:
+    metadata:
+      labels:
+        app: ung-mongo
+    spec:
+      automountServiceAccountToken: false
+      # local-path volumes live on this node's disk, so Mongo must stay here.
+      nodeSelector:
+        kubernetes.io/hostname: threaderipper-server-nvme
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mongo
+          image: mongo:8@sha256:5d7043a4ffe02b9ed1b6e0bab057546981af5ca0a79107e9c461e49bc44c0a7b
+          imagePullPolicy: IfNotPresent
+          args: [--wiredTigerCacheSizeGB, '0.25']
+          ports:
+            - name: mongo
+              containerPort: 27017
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: ung-mongo-auth
+                  key: rootUsername
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ung-mongo-auth
+                  key: rootPassword
+            - name: APP_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ung-mongo-auth
+                  key: appUsername
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ung-mongo-auth
+                  key: appPassword
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+            - name: config
+              mountPath: /data/configdb
+            - name: tmp
+              mountPath: /tmp
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/create-app-user.js
+              subPath: create-app-user.js
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: [mongosh, --quiet, --eval, 'db.adminCommand({ ping: 1 })']
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: mongo
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: init
+          configMap:
+            name: ung-mongo-init
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi
