@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { CredentialForm } from "@/components/vault/credential-form"
+import { CredentialForm } from "@/app/vault/_components/credential-form"
 
 export interface AddCredentialDialogProps {
   open: boolean

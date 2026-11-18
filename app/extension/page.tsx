@@ -8,7 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
-import { ExtensionPageFrame } from "@/components/extension/extension-page-frame"
+import { ExtensionPageFrame } from "@/app/extension/_components/extension-page-frame"
 import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {

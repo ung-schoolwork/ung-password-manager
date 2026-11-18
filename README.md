@@ -92,8 +92,8 @@ The live app runs in Docker on a Kubernetes cluster. See [deploy/kubernetes/READ
 ## Project Structure
 
 ```
-app/          pages and API routes
-components/   React components
+app/          pages, API routes and each page's own components
+components/   shared React components
 lib/          encryption, accounts, vault and sharing logic
 extension/    Chrome extension
 tests/        unit, integration and Playwright tests

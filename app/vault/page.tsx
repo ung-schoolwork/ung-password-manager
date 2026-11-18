@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-import { VaultWorkspace } from "@/components/vault/vault-workspace"
+import { VaultWorkspace } from "@/app/vault/_components/vault-workspace"
 
 export const metadata: Metadata = {
   title: "Vault · UNG Password Manager",

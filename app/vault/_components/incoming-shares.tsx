@@ -11,13 +11,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { CredentialCopyActions } from "@/components/vault/credential-copy-actions"
+import { CredentialCopyActions } from "@/app/vault/_components/credential-copy-actions"
 import {
   currentStatus,
   formatShareDate,
   ShareStatusBadge,
   useNow,
-} from "@/components/vault/share-status"
+} from "@/app/vault/_components/share-status"
 import {
   readSharedCredential,
   removeShare,

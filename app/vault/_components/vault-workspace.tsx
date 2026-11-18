@@ -2,11 +2,11 @@
 
 import { useState } from "react"
 
-import { AddCredentialDialog } from "@/components/vault/add-credential-dialog"
-import { CredentialList } from "@/components/vault/credential-list"
-import { EditCredentialDialog } from "@/components/vault/edit-credential-dialog"
-import { ImportCredentialsDialog } from "@/components/vault/import-credentials-dialog"
-import { SharedCredentials } from "@/components/vault/shared-credentials"
+import { AddCredentialDialog } from "@/app/vault/_components/add-credential-dialog"
+import { CredentialList } from "@/app/vault/_components/credential-list"
+import { EditCredentialDialog } from "@/app/vault/_components/edit-credential-dialog"
+import { ImportCredentialsDialog } from "@/app/vault/_components/import-credentials-dialog"
+import { SharedCredentials } from "@/app/vault/_components/shared-credentials"
 import { useVault } from "@/components/vault/vault-provider"
 import {
   SAVE_FAILED_REASON,

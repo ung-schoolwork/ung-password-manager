@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { formatShareDate } from "@/components/vault/share-status"
+import { formatShareDate } from "@/app/vault/_components/share-status"
 import {
   notifySharesChanged,
   shareCredential,
