@@ -10,7 +10,7 @@ export function ThemeToggle() {
 
   return (
     <Button
-      className="size-9 shrink-0"
+      className="size-11 shrink-0 sm:size-9"
       type="button"
       size="icon"
       variant="outline"

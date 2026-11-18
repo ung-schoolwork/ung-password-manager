@@ -81,7 +81,7 @@ export function CredentialList({
         {/* Below the title on phones, where the two buttons don't fit beside it. */}
         <CardAction className="col-span-2 col-start-1 row-span-1 row-start-3 mt-2 flex flex-wrap gap-2 justify-self-start sm:col-span-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
           <Button
-            className="h-9 px-3 text-sm"
+            className="h-11 px-3 text-sm"
             type="button"
             variant="outline"
             onClick={onImportCredentials}
@@ -90,7 +90,7 @@ export function CredentialList({
             Import credentials
           </Button>
           <Button
-            className="h-9 px-3 text-sm"
+            className="h-11 px-3 text-sm"
             type="button"
             onClick={onAddCredential}
           >
@@ -107,11 +107,11 @@ export function CredentialList({
                 <KeyRound className="size-5" aria-hidden="true" />
               </div>
               <p className="mt-4 font-medium">No credentials yet</p>
-              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+              <p className="mt-1 max-w-xs text-sm text-muted-foreground">
                 Add your first credential to get started.
               </p>
               <Button
-                className="mt-4 h-9 px-3 text-sm"
+                className="mt-4 h-11 px-3 text-sm"
                 type="button"
                 onClick={onAddCredential}
               >
@@ -142,7 +142,7 @@ export function CredentialList({
               </div>
               {searchValue.length > 0 ? (
                 <Button
-                  className="h-9 px-3 text-sm"
+                  className="h-11 px-3 text-sm"
                   type="button"
                   variant="outline"
                   onClick={() => {
@@ -242,12 +242,12 @@ function CredentialRow({
               {credential.accountName}
             </dd>
             <dt className="sr-only">Website or app</dt>
-            <dd className="truncate text-xs text-muted-foreground">
+            <dd className="truncate text-sm text-muted-foreground">
               {credential.siteOrApp}
             </dd>
           </div>
 
-          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
             <dt className="sr-only">Username</dt>
             <dd className="truncate">{credential.username}</dd>
             <span aria-hidden="true">{"\u00B7"}</span>
@@ -277,7 +277,7 @@ function CredentialRow({
       <div className="flex shrink-0 flex-col items-end gap-2 border-t pt-2 sm:border-t-0 sm:pt-0">
         <div className="flex gap-2">
           <Button
-            className="h-9 px-3 text-sm"
+            className="h-11 px-3 text-sm"
             type="button"
             variant="outline"
             aria-label={`Share ${credential.accountName}`}
@@ -287,7 +287,7 @@ function CredentialRow({
             Share
           </Button>
           <Button
-            className="h-9 px-3 text-sm"
+            className="h-11 px-3 text-sm"
             type="button"
             variant="outline"
             aria-label={`Edit ${credential.accountName}`}
