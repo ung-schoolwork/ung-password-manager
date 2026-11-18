@@ -15,7 +15,9 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The Playwright browser install alone can take four minutes on a slow
+    # runner, and the full browser suite takes about five.
+    timeout-minutes: 20
     env:
       MONGODB_URI: mongodb://127.0.0.1:27018/ung_auth_test
       APP_ORIGIN: http://127.0.0.1:3100
