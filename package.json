@@ -5,9 +5,10 @@
   "private": true,
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "bun extension/package.ts --dev && next dev",
+    "build": "bun extension/package.ts && next build",
     "build:extension": "bun extension/build.ts",
+    "package:extension": "bun extension/package.ts",
     "start": "next start",
     "lint": "eslint",
     "test": "bun test tests/unit",

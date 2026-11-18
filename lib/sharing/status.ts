@@ -13,7 +13,10 @@ const DAY = 24 * HOUR
 
 /** A share may end at most this far in the future. */
 export const MAX_SHARE_DURATION_MS = 365 * DAY
-/** An end date must leave at least this much time to use the share. */
+/**
+ * An end date must leave at least this much time to use the share, so a date
+ * picked in the form is not already past by the time the request arrives.
+ */
 export const MIN_SHARE_DURATION_MS = 60 * 1000
 
 export const SHARE_DURATION_PRESETS = [
