@@ -23,6 +23,9 @@ const LIMITS = { global: 1000, source: 120, account: 10 } as const
 // It is still hashed so a database leak cannot be replayed as a login.
 const HASH_PREFIX = "scrypt-v1$" // N=32768, r=8, p=3, 64 bytes; changing parameters requires a new version.
 const HASH_OPTIONS = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 }
+// Each scrypt hash holds 32 MiB (128 * N * r bytes) and a CPU core for a
+// while. Capping concurrent hashes keeps a burst of sign-ins from exhausting
+// the server; requests over the cap get a 429 and retry.
 const MAX_ACTIVE_HASHES = 2
 let activeHashes = 0
 
@@ -188,6 +191,9 @@ export async function hashAuthKey(authKey: string, salt: string) {
     activeHashes--
   }
 }
+// An unknown email is checked against a dummy salt and an all-zero hash, so it
+// still costs a full scrypt and a constant-time compare. Otherwise the response
+// time would reveal which emails have accounts.
 const dummySalt = "00000000000000000000000000000000"
 export async function validAuthKey(
   authKey: string,
@@ -223,6 +229,12 @@ export function sourceAddress(request: Request) {
 export function sourceUnavailable() {
   return json({ error: AUTH_SOURCE_UNAVAILABLE }, 503)
 }
+/**
+ * Counts one attempt against `key` in a fixed 15-minute window. Each step is a
+ * single atomic update (bump a live window, else restart an expired one, else
+ * create), so concurrent requests can never both start from zero. Keys are
+ * stored as digests so the collection holds no emails or IP addresses.
+ */
 export async function increment(key: string, now: Date) {
   const expiresAt = new Date(now.getTime() + LIMIT_WINDOW_MS)
   const filter = { key: digest(key) }
@@ -262,7 +274,10 @@ export async function limited(request: Request, email: string) {
   const source = sourceAddress(request)
   if (!source) return { invalidSource: true as const }
   const now = new Date()
-  // Register and login share budgets. A source cannot lock an account out from another source.
+  // Register and login share budgets. The global cap bounds total hashing work
+  // during a distributed attack, the source cap slows one client, and the
+  // account cap is per source and account: guessing one account is stopped,
+  // but an attacker cannot lock the owner out from the owner's own network.
   for (const [key, cap] of [
     ["global", LIMITS.global],
     [`source:${source}`, LIMITS.source],

@@ -7,6 +7,8 @@ import {
 import { currentApprovedDevice } from "@/lib/devices/server"
 import {
   createShare,
+  endCredentialShares,
+  isCredentialId,
   listIncomingShares,
   listOutgoingShares,
   RecipientNotFoundError,
@@ -59,6 +61,7 @@ export async function POST(request: Request) {
       fromEmail: user.email,
       toEmail: body.recipientEmail,
       credential: normalized,
+      credentialId: body.credentialId,
       expiresAt,
     })
     return json(result, 201)
@@ -75,9 +78,31 @@ export async function POST(request: Request) {
   }
 }
 
+// The owner is deleting a credential: end every share of it first, so no
+// copy stays readable after the credential is gone.
+export async function DELETE(request: Request) {
+  if (!originAllowed(request)) return json({ error: "Forbidden" }, 403)
+  try {
+    const user = await authenticatedUser(request)
+    if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
+    const credentialId = new URL(request.url).searchParams.get("credentialId")
+    if (!isCredentialId(credentialId))
+      return json({ error: "Invalid request" }, 400)
+    return json({
+      ok: true,
+      ...(await endCredentialShares(user.id, credentialId)),
+    })
+  } catch {
+    return failure()
+  }
+}
+
 async function readBody(request: Request): Promise<{
   recipientEmail: string
   credential: CredentialDraft
+  credentialId: string | null
   expiresAt: unknown
 } | null> {
   if (
@@ -112,12 +137,12 @@ async function readBody(request: Request): Promise<{
     const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
       return null
-    const { recipientEmail, credential, expiresAt } = parsed as Record<
-      string,
-      unknown
-    >
+    const { recipientEmail, credential, credentialId, expiresAt } =
+      parsed as Record<string, unknown>
     if (
       typeof recipientEmail !== "string" ||
+      // Older pages send no id; their shares are not linked to a credential.
+      (credentialId != null && !isCredentialId(credentialId)) ||
       !credential ||
       typeof credential !== "object" ||
       Array.isArray(credential)
@@ -136,6 +161,7 @@ async function readBody(request: Request): Promise<{
     return {
       recipientEmail,
       credential: { accountName, siteOrApp, username, password, notes },
+      credentialId: isCredentialId(credentialId) ? credentialId : null,
       expiresAt,
     }
   } catch {

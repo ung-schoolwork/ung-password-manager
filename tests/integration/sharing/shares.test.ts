@@ -5,6 +5,7 @@ import mongoose from "mongoose"
 import { POST as register } from "../../../app/api/auth/register/route"
 import { POST as registerDevice } from "../../../app/api/devices/route"
 import {
+  DELETE as endCredentialSharesRoute,
   GET as listSharesRoute,
   POST as createShareRoute,
 } from "../../../app/api/shares/route"
@@ -79,7 +80,8 @@ async function newAccount(name: string): Promise<Account> {
 async function share(
   from: Account,
   to: Account,
-  expiresAt: string | null = null
+  expiresAt: string | null = null,
+  credentialId: unknown = undefined
 ) {
   const response = await createShareRoute(
     new Request(`${origin}/api/shares`, {
@@ -89,14 +91,24 @@ async function share(
         cookie: from.cookies,
         origin,
       },
-      body: JSON.stringify({ recipientEmail: to.email, credential, expiresAt }),
+      body: JSON.stringify({
+        recipientEmail: to.email,
+        credential,
+        credentialId,
+        expiresAt,
+      }),
     })
   )
   return response
 }
 
-async function sharedId(from: Account, to: Account, expiresAt?: string) {
-  const response = await share(from, to, expiresAt)
+async function sharedId(
+  from: Account,
+  to: Account,
+  expiresAt?: string | null,
+  credentialId?: string
+) {
+  const response = await share(from, to, expiresAt ?? null, credentialId)
   assert.equal(response.status, 201)
   return ((await response.json()) as { id: string }).id
 }
@@ -117,6 +129,22 @@ function remove(id: string, account: Account) {
       headers: { cookie: account.cookies, origin },
     }),
     { params: Promise.resolve({ id }) }
+  )
+}
+
+function endSharesOf(
+  credentialId: string,
+  account: Account | null,
+  headers: Record<string, string> = { origin }
+) {
+  return endCredentialSharesRoute(
+    new Request(
+      `${origin}/api/shares?credentialId=${encodeURIComponent(credentialId)}`,
+      {
+        method: "DELETE",
+        headers: account ? { ...headers, cookie: account.cookies } : headers,
+      }
+    )
   )
 }
 
@@ -402,5 +430,134 @@ describe("shared credential lifetime", () => {
     ])
       assert.equal((await share(owner, recipient, expiresAt)).status, 400)
     assert.deepEqual((await lists(recipient)).incoming, [])
+  })
+})
+
+describe("deleting a shared credential", () => {
+  it("ends every share of it, and recipients see it as removed", async () => {
+    const owner = await newAccount("delete-owner")
+    const first = await newAccount("delete-first")
+    const second = await newAccount("delete-second")
+    const credentialId = randomUUID()
+    const otherCredentialId = randomUUID()
+    const toFirst = await sharedId(owner, first, null, credentialId)
+    const toSecond = await sharedId(
+      owner,
+      second,
+      new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      credentialId
+    )
+    const otherShare = await sharedId(owner, first, null, otherCredentialId)
+    assert.equal((await stored(toFirst))?.credentialId, credentialId)
+    const listed = (await lists(owner)).outgoing as (Listed & {
+      credentialId: string | null
+    })[]
+    assert.equal(
+      listed.find((item) => item.id === toFirst)?.credentialId,
+      credentialId
+    )
+
+    const ended = await endSharesOf(credentialId, owner)
+    assert.equal(ended.status, 200)
+    assert.deepEqual(await ended.json(), { ok: true, ended: 2 })
+
+    for (const [id, recipient] of [
+      [toFirst, first],
+      [toSecond, second],
+    ] as const) {
+      const response = await read(id, recipient)
+      assert.equal(response.status, 410)
+      const text = await response.text()
+      assert.ok(!text.includes(secret))
+      assert.equal((JSON.parse(text) as { status: string }).status, "removed")
+      const record = await stored(id)
+      assert.equal(record?.payload, undefined)
+      assert.equal(record?.revokedBy, "owner")
+      const incoming = (await lists(recipient)).incoming.find(
+        (item) => item.id === id
+      )
+      assert.equal(incoming?.status, "removed")
+      assert.equal(incoming?.accountName, credential.accountName)
+    }
+    const outgoing = (await lists(owner)).outgoing
+    assert.equal(
+      outgoing.find((item) => item.id === toFirst)?.status,
+      "removed"
+    )
+
+    // Other credentials stay shared.
+    assert.equal((await read(otherShare, first)).status, 200)
+
+    // Repeating it is harmless.
+    assert.deepEqual(await (await endSharesOf(credentialId, owner)).json(), {
+      ok: true,
+      ended: 0,
+    })
+  })
+
+  it("also wipes the copy held by a share that already expired", async () => {
+    const owner = await newAccount("delete-expired-owner")
+    const recipient = await newAccount("delete-expired-recipient")
+    const credentialId = randomUUID()
+    const id = await sharedId(
+      owner,
+      recipient,
+      new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      credentialId
+    )
+    await expireNow(id)
+    assert.ok((await stored(id))?.payload)
+    assert.equal((await endSharesOf(credentialId, owner)).status, 200)
+    assert.equal((await stored(id))?.payload, undefined)
+    assert.equal((await read(id, recipient)).status, 410)
+  })
+
+  it("only the owner can end shares of a credential", async () => {
+    const owner = await newAccount("delete-only-owner")
+    const recipient = await newAccount("delete-only-recipient")
+    const credentialId = randomUUID()
+    const id = await sharedId(owner, recipient, null, credentialId)
+
+    // The recipient, or anyone else, ends nothing by naming the same id.
+    const byRecipient = await endSharesOf(credentialId, recipient)
+    assert.equal(byRecipient.status, 200)
+    assert.deepEqual(await byRecipient.json(), { ok: true, ended: 0 })
+    assert.equal((await endSharesOf(credentialId, null)).status, 401)
+    assert.equal(
+      (
+        await endSharesOf(credentialId, owner, {
+          origin: "https://evil.example.test",
+        })
+      ).status,
+      403
+    )
+    assert.equal((await read(id, recipient)).status, 200)
+  })
+
+  it("rejects malformed credential ids", async () => {
+    const owner = await newAccount("delete-bad-id-owner")
+    const recipient = await newAccount("delete-bad-id-recipient")
+    assert.equal((await endSharesOf("", owner)).status, 400)
+    assert.equal((await endSharesOf('{"$ne":null}', owner)).status, 400)
+    assert.equal(
+      (await share(owner, recipient, null, { $ne: null })).status,
+      400
+    )
+    assert.equal(
+      (await share(owner, recipient, null, "x".repeat(101))).status,
+      400
+    )
+    assert.deepEqual((await lists(recipient)).incoming, [])
+  })
+
+  it("leaves shares made before they were linked to a credential", async () => {
+    const owner = await newAccount("delete-unlinked-owner")
+    const recipient = await newAccount("delete-unlinked-recipient")
+    // Older pages sent no credential id.
+    const id = await sharedId(owner, recipient)
+    assert.equal((await stored(id))?.credentialId, null)
+    const ended = await endSharesOf(randomUUID(), owner)
+    assert.deepEqual(await ended.json(), { ok: true, ended: 0 })
+    assert.equal((await read(id, recipient)).status, 200)
   })
 })
