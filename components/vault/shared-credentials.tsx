@@ -74,9 +74,7 @@ export function SharedCredentials() {
           shares={outgoing}
           onChanged={changed}
           onCleared={(id) =>
-            setOutgoing((current) =>
-              current.filter((share) => share.id !== id)
-            )
+            setOutgoing((current) => current.filter((share) => share.id !== id))
           }
         />
       ) : null}

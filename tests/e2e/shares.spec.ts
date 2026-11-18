@@ -65,9 +65,9 @@ async function openSharedWithYou(page: Page) {
     page.getByRole("dialog", { name: "Add a credential" })
   ).toBeVisible()
   await page.keyboard.press("Escape")
-  await expect(
-    page.getByRole("list", { name: "Shared with you" })
-  ).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole("list", { name: "Shared with you" })).toBeVisible(
+    { timeout: 15_000 }
+  )
 }
 
 test("sharing a credential lets the recipient open it from their vault", async ({
@@ -421,4 +421,3 @@ test("the empty message waits until the shares have loaded", async ({
     page.getByText("Nothing has been shared with you yet.")
   ).toBeVisible({ timeout: 15_000 })
 })
-

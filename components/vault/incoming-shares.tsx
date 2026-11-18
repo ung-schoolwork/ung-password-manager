@@ -172,7 +172,7 @@ export function IncomingShares({
                           </span>
                           <ShareStatusBadge status={status} />
                         </p>
-                        <p className="break-words text-xs text-muted-foreground">
+                        <p className="text-xs break-words text-muted-foreground">
                           Shared by {share.fromEmail}
                           {status === "active"
                             ? share.expiresAt

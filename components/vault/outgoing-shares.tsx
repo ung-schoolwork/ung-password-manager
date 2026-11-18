@@ -76,7 +76,6 @@ export function OutgoingShares({
     }
   }
 
-
   return (
     <Card className="min-w-0">
       <CardHeader>
@@ -116,7 +115,7 @@ export function OutgoingShares({
                           </span>
                           <ShareStatusBadge status={status} />
                         </p>
-                        <p className="break-words text-xs text-muted-foreground">
+                        <p className="text-xs break-words text-muted-foreground">
                           {statusDetail(share, status)}
                         </p>
                       </div>
