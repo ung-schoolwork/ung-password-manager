@@ -107,3 +107,7 @@ deploy/       Kubernetes files
 - **Jacob Bridgewater**: password health, risk tags, testing
 
 Built for CSCI 3300 Software Engineering at the University of North Georgia, Fall 2026.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -73,7 +73,7 @@ export function reportSourceProblem(
     "header-invalid": `the ${name} header named by AUTH_TRUSTED_IP_HEADER does not hold a client IP address`,
   }[problem]
   log(
-    `[auth] Sign-in and registration are refused: ${detail}. Configure the reverse proxy to set this header to the client IP; see "Deployment" in README.md.`
+    `[auth] Sign-in and registration are refused: ${detail}. Configure the reverse proxy to set this header to the client IP; see deploy/kubernetes/README.md.`
   )
 }
 
