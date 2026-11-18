@@ -27,6 +27,8 @@ export function normalizeDeviceId(value: string): string | null {
   return /^[a-f0-9]{24}$/.test(id) ? id : null
 }
 
+// The code is displayed in two groups ("1234 5678"), so spaces and dashes a
+// user types or pastes are ignored.
 export function normalizeDeviceCode(value: string): string | null {
   const digits = value.replace(/[\s-]/g, "")
   return new RegExp(`^\\d{${DEVICE_CODE_LENGTH}}$`).test(digits) ? digits : null
