@@ -103,7 +103,7 @@ function CopyButton({
 
   return (
     <Button
-      className="h-9 px-3 text-sm"
+      className="h-11 px-3 text-sm"
       type="button"
       variant="outline"
       aria-label={`Copy ${field}`}

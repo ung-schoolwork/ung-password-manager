@@ -28,7 +28,17 @@ test("opens Health from a credential shield", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/health$/)
   await expect(
-    page.getByText("Vault Password Health", { exact: true })
+    page.getByText("Vault password health", { exact: true })
+  ).toBeVisible()
+  const healthyReport = page
+    .getByRole("list", { name: "Password health reports" })
+    .getByRole("listitem")
+    .filter({ hasText: "University email" })
+  await expect(
+    healthyReport.getByText("Low risk", { exact: true })
+  ).toBeVisible()
+  await expect(
+    healthyReport.getByText("No warnings", { exact: true })
   ).toBeVisible()
 })
 
@@ -77,7 +87,6 @@ test("labels each credential shield with its health status", async ({
   await expect(
     unhealthyRow.getByText("Needs attention", { exact: true })
   ).toBeVisible()
-
   // The different silhouettes keep the two states distinct without colour.
   await expect(healthyRow.locator("svg.lucide-shield-check")).toBeVisible()
   await expect(unhealthyRow.locator("svg.lucide-triangle-alert")).toBeVisible()
@@ -103,10 +112,19 @@ test("shows saved password warnings and their reasons", async ({
   await page.getByRole("link", { name: "Health", exact: true }).click()
   const reports = page.getByRole("list", { name: "Password health reports" })
   await expect(
-    page.getByText("Vault Password Health", { exact: true })
+    page.getByText("Vault password health", { exact: true })
   ).toBeVisible()
   await expect(
     page.getByText("This matches a commonly used password.")
+  ).toBeVisible()
+  const universityReport = reports
+    .getByRole("listitem")
+    .filter({ hasText: "University email" })
+  await expect(
+    universityReport.getByText("Low risk", { exact: true })
+  ).toBeVisible()
+  await expect(
+    universityReport.getByText("2 issues", { exact: true })
   ).toBeVisible()
   await expect(
     reports.getByRole("img", { name: "Needs attention" })
@@ -180,7 +198,7 @@ test("tags only the highlighted saved account and keeps its current risk level",
   })
   const tagCard = page
     .locator('[data-slot="card"]')
-    .filter({ hasText: "Tag Existing Account" })
+    .filter({ hasText: "Tag existing account" })
   const reports = page.getByRole("list", { name: "Password health reports" })
   const riskLevel = page.getByLabel("Risk level")
   const saveRisk = page.getByRole("button", { name: "Save risk level" })
@@ -236,10 +254,10 @@ test("tags only the highlighted saved account and keeps its current risk level",
   await riskLevel.selectOption("high")
   await saveRiskLevel()
   await expect(
-    reportFor(highlightedSite).getByText("high", { exact: true })
+    reportFor(highlightedSite).getByText("High risk", { exact: true })
   ).toBeVisible()
   await expect(
-    reportFor(otherSite).getByText("low", { exact: true })
+    reportFor(otherSite).getByText("Low risk", { exact: true })
   ).toBeVisible()
   // Tagging reuses the saved account instead of adding a credential.
   await expect(reports.getByRole("listitem")).toHaveCount(2)
@@ -250,7 +268,7 @@ test("tags only the highlighted saved account and keeps its current risk level",
   await expect(riskLevel).toHaveValue("high")
   await saveRiskLevel()
   await expect(
-    reportFor(highlightedSite).getByText("high", { exact: true })
+    reportFor(highlightedSite).getByText("High risk", { exact: true })
   ).toBeVisible()
   await expect(reports.getByRole("listitem")).toHaveCount(2)
 
@@ -262,10 +280,10 @@ test("tags only the highlighted saved account and keeps its current risk level",
   await riskLevel.selectOption("medium")
   await saveRiskLevel()
   await expect(
-    reportFor(otherSite).getByText("medium", { exact: true })
+    reportFor(otherSite).getByText("Medium risk", { exact: true })
   ).toBeVisible()
   await expect(
-    reportFor(highlightedSite).getByText("high", { exact: true })
+    reportFor(highlightedSite).getByText("High risk", { exact: true })
   ).toBeVisible()
 
   // An unknown name tags nobody and still adds no credential.
@@ -347,10 +365,10 @@ test("keeps a newer account selection when an earlier save finishes late", async
   await saveRisk.click()
   await expect(accountInput).toHaveValue("")
   await expect(
-    reportFor("mail.example.edu").getByText("high", { exact: true })
+    reportFor("mail.example.edu").getByText("High risk", { exact: true })
   ).toBeVisible()
   await expect(
-    reportFor("backup.example.edu").getByText("low", { exact: true })
+    reportFor("backup.example.edu").getByText("Low risk", { exact: true })
   ).toBeVisible()
   await expect(reports.getByRole("listitem")).toHaveCount(2)
 })

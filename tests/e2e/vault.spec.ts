@@ -9,6 +9,74 @@ test.beforeEach(async ({ page }) => {
   await registerAccount(page)
 })
 
+test("keeps vault navigation usable on phones and keyboard focus in order", async ({
+  page,
+  isMobile,
+}) => {
+  await page.goto("/")
+  await unlockVault(page)
+
+  await page.getByLabel("Account label").fill("University email")
+  await page.getByLabel("Website or app").fill("mail.example.edu")
+  await page.getByLabel("Username").fill("student@example.edu")
+  await page.getByLabel("Password", { exact: true }).fill("DemoPassword!234")
+  await page.getByRole("button", { name: "Save credential" }).click()
+
+  const navigation = page.getByRole("navigation", {
+    name: "Primary navigation",
+  })
+  const links = navigation.getByRole("link")
+  await expect(links).toHaveCount(4)
+
+  if (isMobile) {
+    const positions = await Promise.all(
+      (await links.all()).map((link) => link.boundingBox())
+    )
+    expect(positions.every((position) => position !== null)).toBe(true)
+    const [vault, generator, health, settings] = positions
+    expect(vault!.y).toBe(generator!.y)
+    expect(health!.y).toBeGreaterThan(vault!.y)
+    expect(settings!.y).toBe(health!.y)
+    expect(health!.x).toBe(vault!.x)
+    expect(settings!.x).toBe(generator!.x)
+    for (const link of await links.all()) {
+      await expect(link).toHaveCSS("min-height", "44px")
+    }
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth
+      )
+    ).toBe(true)
+  }
+
+  await expect(
+    page.getByRole("link", { name: "Skip to main content" })
+  ).toBeAttached()
+  const skipLink = page.getByRole("link", { name: "Skip to main content" })
+  await skipLink.focus()
+  await expect(skipLink).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(page.locator("#main-content")).toBeFocused()
+
+  await page.getByRole("link", { name: "UNG Password Manager" }).focus()
+  for (const label of ["Vault", "Generator", "Health", "Settings"]) {
+    await page.keyboard.press("Tab")
+    await expect(navigation.getByRole("link", { name: label })).toBeFocused()
+  }
+  await page.keyboard.press("Tab")
+  await expect(
+    page.getByRole("button", { name: "Toggle dark theme" })
+  ).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(page.getByRole("button", { name: "Lock vault" })).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(
+    page.getByRole("button", { name: "Import credentials" })
+  ).toBeFocused()
+})
+
 test("creates, validates, saves, encrypts, reloads, and unlocks a vault", async ({
   page,
   isMobile,
