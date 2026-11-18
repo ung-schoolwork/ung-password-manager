@@ -10,6 +10,7 @@ import {
 } from "react"
 import { AlertTriangle, KeyRound, Plus } from "lucide-react"
 
+import { usePassphraseWordSet } from "@/components/vault/use-passphrase-word-set"
 import { useVault } from "@/components/vault/vault-provider"
 import { analyzeCredentialsHealth } from "@/lib/vault/health"
 import { cn } from "@/lib/utils"
@@ -65,9 +66,10 @@ export function PasswordHealth() {
     activeOptionRef.current?.scrollIntoView({ block: "nearest" })
   }, [activeSuggestionIndex, suggestionsOpen])
 
+  const passphraseWords = usePassphraseWordSet()
   const auditedAccounts = useMemo(
-    () => analyzeCredentialsHealth(credentials),
-    [credentials]
+    () => analyzeCredentialsHealth(credentials, passphraseWords),
+    [credentials, passphraseWords]
   )
   const accountsWithIssues = auditedAccounts.filter(
     (acc) => acc.warnings.length > 0

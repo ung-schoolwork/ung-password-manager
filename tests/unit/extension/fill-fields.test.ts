@@ -118,6 +118,34 @@ describe("pickLoginFields", () => {
   })
 })
 
+describe("pickLoginFields for saving", () => {
+  it("reads the new password of a sign-up or password change form", () => {
+    const signUp = [
+      field("email", { autocomplete: "username" }),
+      field("password", { autocomplete: "new-password" }),
+      field("password", { autocomplete: "new-password", hints: "confirm" }),
+    ]
+    expect(pickLoginFields(signUp, { forSaving: true })).toEqual({
+      username: 0,
+      password: 1,
+    })
+    const change = [
+      field("password", { autocomplete: "current-password" }),
+      field("password", { autocomplete: "new-password" }),
+    ]
+    expect(pickLoginFields(change, { forSaving: true }).password).toBe(1)
+    // Filling still never touches a new-password field.
+    expect(pickLoginFields(change).password).toBe(0)
+  })
+
+  it("reads a sign-in form like filling does", () => {
+    const signIn = [field("text"), field("password")]
+    expect(pickLoginFields(signIn, { forSaving: true })).toEqual(
+      pickLoginFields(signIn)
+    )
+  })
+})
+
 describe("isShown", () => {
   const page = { width: 1280, height: 2000 }
   const box = { top: 100, left: 100, width: 200, height: 30 }

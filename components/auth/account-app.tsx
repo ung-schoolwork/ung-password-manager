@@ -25,13 +25,16 @@ function AccountScreen({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const accountPage = pathname === "/sign-in" || pathname === "/register"
+  // Pages anyone can open. Signed-in people see them inside the app.
+  const publicPage = pathname === "/extension"
   const authenticated = status === "signed-in" && session !== null
 
   useEffect(() => {
     if (status === "loading") return
     if (authenticated && accountPage) router.replace("/vault")
-    else if (!authenticated && !accountPage) router.replace("/sign-in")
-  }, [status, authenticated, accountPage, router])
+    else if (!authenticated && !accountPage && !publicPage)
+      router.replace("/sign-in")
+  }, [status, authenticated, accountPage, publicPage, router])
 
   if (status === "loading" || (authenticated && accountPage)) {
     return (
@@ -43,7 +46,7 @@ function AccountScreen({ children }: { children: ReactNode }) {
   if (!authenticated) {
     // Render the actual route segment so navigation cannot expose a temporary
     // form that gets replaced while the user is typing.
-    return accountPage ? (
+    return accountPage || publicPage ? (
       children
     ) : (
       <main className="grid min-h-svh place-items-center p-6">

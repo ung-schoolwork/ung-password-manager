@@ -12,8 +12,10 @@ import {
 
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
+import { AutoLockWarning, useAutoLock } from "@/components/vault/auto-lock"
 import { registerThisDevice } from "@/lib/devices/client"
 import { DeviceNotApprovedError } from "@/lib/devices/shared"
+import { endCredentialShares, notifySharesChanged } from "@/lib/sharing/client"
 import {
   fetchVaultRevision,
   RemoteVaultRepository,
@@ -274,11 +276,22 @@ function ApprovedVaultProvider({
     [email, refreshCredentials, requireService, syncVaultRevision]
   )
 
-  const lockVault = useCallback(() => {
+  // Locks this tab only; lockVault below also locks the account's other tabs.
+  const lockThisTab = useCallback(() => {
     serviceRef.current?.lockVault()
     setCredentials([])
     setStatus("locked")
   }, [])
+  const autoLock = useAutoLock({
+    accountId,
+    unlocked: status === "unlocked",
+    onLock: lockThisTab,
+  })
+  const { broadcastLock } = autoLock
+  const lockVault = useCallback(() => {
+    lockThisTab()
+    broadcastLock()
+  }, [lockThisTab, broadcastLock])
 
   const addCredential = useCallback(
     async (draft: CredentialDraft) => {
@@ -332,6 +345,16 @@ function ApprovedVaultProvider({
       const service = requireService()
       setBusy(true)
       try {
+        // Shares are separate copies of the credential, so end them first.
+        // If that fails nothing is deleted; if the vault update then fails,
+        // the shares have already ended. A copy never outlives the
+        // credential.
+        try {
+          await endCredentialShares(id)
+        } catch {
+          throw new Error("The credential could not be deleted. Try again.")
+        }
+        notifySharesChanged()
         await service.removeCredential(id)
         refreshCredentials(service)
         await syncVaultRevision(service)
@@ -358,6 +381,13 @@ function ApprovedVaultProvider({
       }}
     >
       {children}
+      {autoLock.lockAt !== null ? (
+        <AutoLockWarning
+          lockAt={autoLock.lockAt}
+          onStay={autoLock.stayUnlocked}
+          onLockNow={lockVault}
+        />
+      ) : null}
     </VaultContext.Provider>
   )
 }

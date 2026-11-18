@@ -8,6 +8,7 @@ import {
   json,
   limited,
   originAllowed,
+  sourceUnavailable,
   throttled,
   User,
   validAuthKey,
@@ -21,8 +22,7 @@ export async function POST(request: Request) {
     if (!input) return json({ error: "Invalid credentials" }, 400)
     await connectAuth()
     const limit = await limited(request, input.email)
-    if (limit && "invalidSource" in limit)
-      return json({ error: "Forbidden" }, 403)
+    if (limit && "invalidSource" in limit) return sourceUnavailable()
     if (limit && "retryAfter" in limit) return throttled(limit.retryAfter)
     const user = await User.findOne({ email: input.email })
     if (

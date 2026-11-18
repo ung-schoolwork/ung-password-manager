@@ -6,6 +6,7 @@ import {
   fetchVault,
   handleRequest,
   isExtensionRequest,
+  saveVault,
   signIn,
   signOut,
 } from "../../../extension/src/api"
@@ -193,6 +194,40 @@ describe("extension device and vault access", () => {
     ).toEqual({ state: "unavailable" })
   })
 
+  it("tells an app that refuses this extension apart from one it can't reach", async () => {
+    const refused = () => server(403, { error: "Forbidden" })
+    const proof = { email: "a@example.test", authKey: "b".repeat(64) }
+    expect(await signIn(origin, proof, refused())).toEqual({ state: "blocked" })
+    expect(await signOut(origin, refused())).toEqual({ state: "blocked" })
+    expect(await fetchDevice(origin, refused())).toEqual({ state: "blocked" })
+    expect(
+      await saveVault(
+        origin,
+        { envelope: envelope as never, expectedRevision: revision },
+        refused()
+      )
+    ).toEqual({ state: "blocked" })
+    // A device that is not approved yet is still reported as such.
+    expect(
+      await saveVault(
+        origin,
+        { envelope: envelope as never, expectedRevision: revision },
+        server(403, { error: "Device not approved" })
+      )
+    ).toEqual({ state: "not-approved" })
+    // No answer at all, or a server error, means the app can't be reached.
+    const offline = (async () => {
+      throw new TypeError("Failed to fetch")
+    }) as unknown as typeof fetch
+    expect(await fetchDevice(origin, offline)).toEqual({ state: "unavailable" })
+    expect(await signIn(origin, proof, offline)).toEqual({
+      state: "unavailable",
+    })
+    expect(await fetchDevice(origin, server(503))).toEqual({
+      state: "unavailable",
+    })
+  })
+
   it("routes each popup request to its endpoint", async () => {
     const paths: Record<string, string> = {
       session: "/api/auth/session",
@@ -210,5 +245,75 @@ describe("extension device and vault access", () => {
       )
       expect(seen.map((request) => request.url)).toEqual([`${origin}${path}`])
     }
+  })
+})
+
+describe("extension vault saves", () => {
+  it("accepts only a well-formed encrypted vault to save", () => {
+    expect(
+      isExtensionRequest({
+        type: "save-vault",
+        envelope,
+        expectedRevision: revision,
+      })
+    ).toBe(true)
+    expect(
+      isExtensionRequest({
+        type: "save-vault",
+        envelope,
+        expectedRevision: null,
+      })
+    ).toBe(true)
+    for (const value of [
+      { type: "save-vault", envelope },
+      { type: "save-vault", envelope, expectedRevision: "1" },
+      {
+        type: "save-vault",
+        envelope: { ...envelope, ciphertext: "not base64!" },
+        expectedRevision: revision,
+      },
+      {
+        type: "save-vault",
+        envelope: { credentials: [{ password: "plain" }] },
+        expectedRevision: revision,
+      },
+    ])
+      expect(isExtensionRequest(value)).toBe(false)
+  })
+
+  it("puts only the envelope and revision, and reports conflicts", async () => {
+    const seen: Seen[] = []
+    const next = "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"
+    expect(
+      await saveVault(
+        origin,
+        { envelope: envelope as never, expectedRevision: revision },
+        server(200, { revision: next }, seen)
+      )
+    ).toEqual({ state: "saved", revision: next })
+    expect(seen[0].url).toBe(`${origin}/api/vault`)
+    expect(seen[0].init?.method).toBe("PUT")
+    expect(seen[0].init?.credentials).toBe("include")
+    expect(JSON.parse(String(seen[0].init?.body))).toEqual({
+      envelope,
+      expectedRevision: revision,
+    })
+
+    const write = { envelope: envelope as never, expectedRevision: revision }
+    expect(await saveVault(origin, write, server(409))).toEqual({
+      state: "conflict",
+    })
+    expect(await saveVault(origin, write, server(401))).toEqual({
+      state: "signed-out",
+    })
+    expect(await saveVault(origin, write, server(403))).toEqual({
+      state: "not-approved",
+    })
+    expect(await saveVault(origin, write, server(503))).toEqual({
+      state: "unavailable",
+    })
+    expect(await saveVault(origin, write, server(200, {}))).toEqual({
+      state: "unavailable",
+    })
   })
 })

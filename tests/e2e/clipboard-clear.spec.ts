@@ -273,6 +273,140 @@ test("leaves a generator password alone if the clipboard no longer holds it", as
   expect(await readClipboard(page)).toBe("something-else-entirely")
 })
 
+function savedCredentialStatus(page: Page) {
+  return page
+    .getByRole("list", { name: "Saved credentials" })
+    .getByRole("listitem")
+    .getByRole("status")
+}
+
+test("tells the user when the copied password has been cleared", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard.",
+    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+  )
+  expect(await readClipboard(page)).toBe("")
+})
+
+test("clears anyway and tells the user when the clipboard cannot be read", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a browser that refuses clipboard reads.
+  await page.evaluate(() => {
+    navigator.clipboard.readText = () =>
+      Promise.reject(new DOMException("Read denied", "NotAllowedError"))
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard. Your browser didn't let us check it first, so anything you copied since was cleared too.",
+    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+  )
+})
+
+test("clears without asking for clipboard access the site was not granted", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // A browser that has not been granted clipboard reads would prompt for one
+  // and hold the read until the prompt is answered, so the app must not try.
+  await page.context().clearPermissions()
+  await page.context().grantPermissions(["clipboard-write"])
+  await page.evaluate(() => {
+    const target = window as unknown as { clipboardReads: number }
+    target.clipboardReads = 0
+    navigator.clipboard.readText = () => {
+      target.clipboardReads += 1
+      return new Promise<string>(() => {})
+    }
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard. Your browser didn't let us check it first, so anything you copied since was cleared too.",
+    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+  )
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { clipboardReads: number }).clipboardReads
+    )
+  ).toBe(0)
+
+  // Restore the real read (the stub is an own property) to check the clear.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.evaluate(() => {
+    delete (navigator.clipboard as { readText?: unknown }).readText
+  })
+  expect(await readClipboard(page)).toBe("")
+})
+
+test("clears anyway when a clipboard read never answers", async ({ page }) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a read held by a permission prompt nobody answers.
+  await page.evaluate(() => {
+    navigator.clipboard.readText = () => new Promise<string>(() => {})
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard. Your browser didn't let us check it first, so anything you copied since was cleared too.",
+    { timeout: CLIPBOARD_CLEAR_MS + 2_000 + SAFETY_MARGIN_MS * 2 }
+  )
+})
+
+test("tells the user when the clipboard could not be cleared", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a browser that refuses the clear (for example when the tab
+  // has lost focus) while still allowing the copy itself.
+  await page.evaluate(() => {
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard)
+    navigator.clipboard.writeText = (text: string) =>
+      text === ""
+        ? Promise.reject(new DOMException("Write denied", "NotAllowedError"))
+        : writeText(text)
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Couldn't clear the password from your clipboard. Copy something else to replace it.",
+    { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+  )
+  expect(await readClipboard(page)).toBe(credentialPassword)
+})
+
+test("tells the user on the generator page when the clipboard could not be cleared", async ({
+  page,
+}) => {
+  await openGenerator(page)
+  await copyGeneratedPassword(page)
+
+  await page.evaluate(() => {
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard)
+    navigator.clipboard.writeText = (text: string) =>
+      text === ""
+        ? Promise.reject(new DOMException("Write denied", "NotAllowedError"))
+        : writeText(text)
+  })
+
+  await expect(
+    page.getByText(
+      "Couldn't clear the password from your clipboard. Copy something else to replace it."
+    )
+  ).toBeVisible({ timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 })
+})
+
 // Takes a V8 heap snapshot (Chromium only) and returns its JSON text.
 async function takeHeapSnapshot(page: Page) {
   const cdp = await page.context().newCDPSession(page)
@@ -467,4 +601,53 @@ test("the pending clear of a saved password does not keep it in memory after loc
   ).toBeVisible()
 
   expect(await heldClearTimersReach(page, password)).toBe(false)
+})
+
+test("retries a failed clear when the user returns to the tab", async ({
+  page,
+}) => {
+  await createVaultWithCredential(page)
+  await copyPassword(page)
+
+  // Stand in for a browser that refuses the clear while the user is in
+  // another window, then allows it again once the user is back.
+  await page.evaluate(() => {
+    const w = window as unknown as { away?: boolean; refusedClears?: number }
+    w.away = true
+    w.refusedClears = 0
+    const hasFocus = document.hasFocus.bind(document)
+    document.hasFocus = () => !w.away && hasFocus()
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard)
+    navigator.clipboard.writeText = (text: string) => {
+      if (text !== "" || !w.away) return writeText(text)
+      w.refusedClears = (w.refusedClears ?? 0) + 1
+      return Promise.reject(
+        new DOMException("Document is not focused", "NotAllowedError")
+      )
+    }
+  })
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => (window as unknown as { refusedClears: number }).refusedClears
+        ),
+      { timeout: CLIPBOARD_CLEAR_MS + SAFETY_MARGIN_MS * 2 }
+    )
+    .toBeGreaterThan(0)
+  // The refusal is expected while the user is away, so no error is shown.
+  await expect(savedCredentialStatus(page)).toHaveText("Password copied.")
+  expect(await readClipboard(page)).toBe(credentialPassword)
+
+  await page.evaluate(() => {
+    const w = window as unknown as { away?: boolean }
+    w.away = false
+    window.dispatchEvent(new Event("focus"))
+  })
+
+  await expect(savedCredentialStatus(page)).toHaveText(
+    "Password cleared from clipboard."
+  )
+  await expect.poll(() => readClipboard(page)).toBe("")
 })

@@ -38,15 +38,16 @@ const FIELD_LABELS: Record<keyof typeof HEADER_ALIASES, string> = {
   notes: "notes",
 }
 
-type CsvRecord = { line: number; fields: string[] }
+/** One non-blank row from an import file and the row number it came from. */
+export type ImportRecord = { line: number; fields: string[] }
 
 /**
  * Splits CSV text into records, honoring double-quoted values that may
  * contain commas, line breaks, or escaped quotes (""). Fields are not
  * trimmed so passwords keep their exact characters.
  */
-function parseCsvRecords(text: string): CsvRecord[] {
-  const records: CsvRecord[] = []
+export function parseCsvRecords(text: string): ImportRecord[] {
+  const records: ImportRecord[] = []
   let fields: string[] = []
   let current = ""
   let inQuotes = false
@@ -126,7 +127,18 @@ function buildHeaderMap(
  * that need attention (missing required fields, unreadable row, etc).
  */
 export function parseCredentialsCsv(text: string): ImportParseResult {
-  const [header, ...records] = parseCsvRecords(text)
+  return parseCredentialRecords(parseCsvRecords(text))
+}
+
+/**
+ * Maps the header row to credential fields and validates every data row.
+ * CSV and spreadsheet imports both go through here so they accept the same
+ * column names and report the same problems.
+ */
+export function parseCredentialRecords(
+  allRecords: ImportRecord[]
+): ImportParseResult {
+  const [header, ...records] = allRecords
 
   if (!header) {
     return { rows: [], okCount: 0, issueCount: 0 }

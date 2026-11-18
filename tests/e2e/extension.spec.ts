@@ -18,8 +18,11 @@ import type { Credential } from "../../lib/vault/types"
 import {
   accountPassword,
   accountProof,
+  approvalCode,
   approve,
+  decryptSnapshot,
   registerAccount,
+  signIn,
   unlockVault,
   vaultKeyFor,
 } from "./account-helpers"
@@ -582,4 +585,280 @@ test("a two-step sign-in is filled one step at a time", async () => {
   ])
   await second.popup.close()
   await second.disconnect()
+})
+
+test("the installed extension asks only for what it needs and keeps nothing in storage", async () => {
+  const worker =
+    context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"))
+  const manifest = await worker.evaluate(() => chrome.runtime.getManifest())
+  expect(manifest.manifest_version).toBe(3)
+  expect([...(manifest.permissions ?? [])].sort()).toEqual([
+    "activeTab",
+    "scripting",
+  ])
+  expect(manifest.host_permissions).toEqual([`${appOrigin}/*`])
+  // Nothing runs on websites until the user acts in the popup.
+  expect(manifest.content_scripts).toBeUndefined()
+  expect(manifest.externally_connectable).toBeUndefined()
+
+  // Signed out, the popup offers sign-in and a way to create an account.
+  const popup = await openPopup()
+  await expect(popup.getByRole("heading", { name: "Sign in" })).toBeVisible()
+  await expect(popup.getByRole("region", { name: "Sign in" })).toContainText(
+    "New here? Create an account"
+  )
+  await popup
+    .getByRole("region", { name: "Sign in" })
+    .getByRole("button", { name: "Sign in", exact: true })
+    .click()
+  await expect(popup.getByRole("alert")).toHaveText(
+    "Enter your email and password."
+  )
+  const registerTab = context.waitForEvent("page")
+  await popup
+    .getByRole("button", { name: "New here? Create an account" })
+    .click()
+  await expect(await registerTab).toHaveURL(`${appOrigin}/register`)
+
+  // Sign in, open the vault, and fill a login: nothing reaches extension
+  // storage or the popup's web storage.
+  await fillAccount()
+  const page = await signInPage(SIGN_IN_PAGE)
+  const opened = await openToolbarPopup(page)
+  await unlockPopup(opened.popup)
+  await opened.popup
+    .getByRole("button", { name: "Fill Grades, student-grades" })
+    .click()
+  await expect(fillStatus(opened.popup)).toHaveText(
+    "Filled your username and password."
+  )
+  // Without the "storage" permission, extension storage does not exist.
+  expect(await worker.evaluate(() => typeof chrome.storage)).toBe("undefined")
+  expect(await opened.popup.evaluate(() => typeof chrome.storage)).toBe(
+    "undefined"
+  )
+  expect(
+    await opened.popup.evaluate(() => ({
+      local: localStorage.length,
+      session: sessionStorage.length,
+    }))
+  ).toEqual({ local: 0, session: 0 })
+  await opened.popup.close()
+  await opened.disconnect()
+})
+
+const SIGN_UP_PAGE = `<!doctype html>
+<title>Create an account</title>
+<form onsubmit="event.preventDefault()">
+  <label>Email <input name="email" type="email" autocomplete="username" /></label>
+  <label>New password <input name="new-password" type="password" autocomplete="new-password" /></label>
+  <label>Confirm password <input name="confirm" type="password" autocomplete="new-password" /></label>
+  <input name="trap-password" type="password" style="display:none" value="hidden-trap" />
+  <button>Create account</button>
+</form>`
+
+test("a login typed into a page is saved from the popup and filled next time", async () => {
+  test.setTimeout(60_000)
+  const account = await fillAccount()
+  const page = await signInPage(SIGN_UP_PAGE)
+  await page.getByLabel("Email").fill("new-student@example.test")
+  await page.getByLabel("New password").fill("a brand new password 42")
+  await page.getByLabel("Confirm password").fill("a brand new password 42")
+  await page.getByRole("button", { name: "Create account" }).click()
+
+  const { popup, disconnect } = await openToolbarPopup(page)
+  await unlockPopup(popup)
+  await vaultRegion(popup).getByRole("button", { name: "Save a login" }).click()
+  const form = popup.getByRole("region", { name: "Save a login" })
+  await expect(form).toContainText(
+    "Filled in from this page. Check the details, then save."
+  )
+  await expect(form.getByLabel("Account label")).toHaveValue("127.0.0.1")
+  await expect(form.getByLabel("Website or app")).toHaveValue("127.0.0.1")
+  await expect(form.getByLabel("Username")).toHaveValue(
+    "new-student@example.test"
+  )
+  await expect(form.getByLabel("Password", { exact: true })).toHaveValue(
+    "a brand new password 42"
+  )
+  await expect(form.getByLabel("Password", { exact: true })).toHaveAttribute(
+    "type",
+    "password"
+  )
+
+  // Missing fields are named and nothing is saved.
+  await form.getByLabel("Account label").fill("")
+  await form.getByRole("button", { name: "Save login" }).click()
+  await expect(form.getByText("Enter an account label.")).toBeVisible()
+  await expect(form.getByLabel("Account label")).toBeFocused()
+
+  await form.getByLabel("Account label").fill("Course signup")
+  await form.getByRole("button", { name: "Save login" }).click()
+  await expect(fillStatus(popup)).toHaveText("Saved Course signup.")
+  const forSite = popup.getByRole("list", { name: "Logins for this website" })
+  await expect(forSite.getByRole("listitem")).toHaveText([
+    /Course signup\s*new-student@example\.test/,
+    /Grades\s*student-grades/,
+  ])
+  await expect(popup.getByText("a brand new password 42")).toHaveCount(0)
+  await popup.close()
+  await disconnect()
+
+  // The app decrypts the same vault, with the new login added to the others.
+  const saved = await decryptSnapshot(
+    account.email,
+    await (await context.request.get("/api/vault")).json()
+  )
+  expect(saved.credentials.map((item) => item.accountName).sort()).toEqual([
+    "Course signup",
+    "Grades",
+    "Library",
+  ])
+  expect(
+    saved.credentials.find((item) => item.accountName === "Course signup")
+  ).toMatchObject({
+    siteOrApp: "127.0.0.1",
+    username: "new-student@example.test",
+    password: "a brand new password 42",
+  })
+
+  // The saved login fills a sign-in page on the same site.
+  const signIn = await signInPage(SIGN_IN_PAGE)
+  const next = await openToolbarPopup(signIn)
+  await unlockPopup(next.popup)
+  await next.popup
+    .getByRole("button", {
+      name: "Fill Course signup, new-student@example.test",
+    })
+    .click()
+  await expect(signIn.getByLabel("Email")).toHaveValue(
+    "new-student@example.test"
+  )
+  await expect(signIn.getByLabel("Password")).toHaveValue(
+    "a brand new password 42"
+  )
+  await next.popup.close()
+  await next.disconnect()
+})
+
+test("locking, by hand or after inactivity in the app, keeps the browser signed in and asks for the password", async () => {
+  test.setTimeout(90_000)
+  const appTab = await context.newPage()
+  const account = await registerAccount(appTab)
+  await saveVault(context.request, account.email, [
+    credential("Library", "student-library"),
+  ])
+
+  // The app's vault locks itself after 15 minutes without activity.
+  await appTab.clock.install()
+  await appTab.goto("/vault")
+  await unlockVault(appTab)
+  await expect(appTab.getByText("student-library").first()).toBeVisible()
+
+  const popup = await openPopup()
+  await unlockPopup(popup)
+  await expect(await searchVault(popup, "library")).toContainText(
+    "student-library"
+  )
+
+  await appTab.clock.fastForward("15:00")
+  await expect(
+    appTab.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+  await expect(appTab.getByText("student-library")).toHaveCount(0)
+
+  // Locking the app's vault does not sign the browser out: the popup opened
+  // again asks only for the password, and the vault opens.
+  await popup.reload()
+  await expect(
+    popup.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+  await expect(popup.getByText(`Signed in as ${account.email}`)).toBeVisible()
+  await expect(popup.getByText("student-library")).toHaveCount(0)
+  await unlockPopup(popup)
+  await expect(await searchVault(popup, "library")).toContainText(
+    "student-library"
+  )
+
+  // Locking in the popup hides the logins but leaves the app signed in.
+  await vaultRegion(popup).getByRole("button", { name: "Lock" }).click()
+  await expect(
+    popup.getByRole("heading", { name: "Unlock your vault" })
+  ).toBeVisible()
+  await expect(popup.getByText("student-library")).toHaveCount(0)
+  expect((await context.request.get("/api/auth/session")).status()).toBe(200)
+  await unlockVault(appTab)
+  await expect(appTab.getByText("student-library").first()).toBeVisible()
+})
+
+test("changing the password on another device signs the extension out until the new password is used", async ({
+  browser,
+}) => {
+  test.setTimeout(120_000)
+  const newPassword = "a-new-account-password-456"
+  // This Chrome profile is the account's first device; the popup is open.
+  const appTab = await context.newPage()
+  const account = await registerAccount(appTab)
+  await saveVault(context.request, account.email, [
+    credential("Library", "student-library"),
+  ])
+  const popup = await openPopup()
+  await unlockPopup(popup)
+  await expect(await searchVault(popup, "library")).toContainText(
+    "student-library"
+  )
+
+  // A laptop signs in, is approved from this profile, and changes the
+  // password in Settings.
+  const laptop = await browser.newContext()
+  await setTestClientIp(laptop)
+  const laptopPage = await laptop.newPage()
+  await laptopPage.goto("/sign-in")
+  await signIn(laptopPage, account.email)
+  const code = await approvalCode(laptopPage)
+  await appTab.goto("/vault")
+  await unlockVault(appTab)
+  await approve(appTab, code)
+  await laptopPage.goto("/vault")
+  await unlockVault(laptopPage)
+  await expect(laptopPage.getByText("student-library").first()).toBeVisible()
+  await laptopPage
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Settings", exact: true })
+    .click()
+  await laptopPage
+    .getByLabel("Current password", { exact: true })
+    .fill(accountPassword)
+  await laptopPage.getByLabel("New password", { exact: true }).fill(newPassword)
+  await laptopPage
+    .getByLabel("Confirm new password", { exact: true })
+    .fill(newPassword)
+  await laptopPage.getByRole("button", { name: "Change password" }).click()
+  await expect(
+    laptopPage
+      .getByRole("status")
+      .filter({ hasText: "Your password was changed." })
+  ).toBeVisible({ timeout: 20_000 })
+
+  // The open popup notices that this browser was signed out and forgets the
+  // vault.
+  await expect(popup.getByRole("heading", { name: "Sign in" })).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(popup.getByRole("alert")).toHaveText("You were signed out.")
+  await expect(popup.getByText("student-library")).toHaveCount(0)
+
+  // The old password no longer works; the new one opens the same vault, and
+  // this browser is still an approved device.
+  await signInFromPopup(popup, account.email)
+  await expect(popup.getByRole("alert")).toHaveText(
+    "The email or password is incorrect."
+  )
+  const form = popup.getByRole("region", { name: "Sign in" })
+  await form.getByLabel("Password").fill(newPassword)
+  await form.getByRole("button", { name: "Sign in", exact: true }).click()
+  await expect(await searchVault(popup, "library")).toContainText(
+    "student-library"
+  )
+  await laptop.close()
 })

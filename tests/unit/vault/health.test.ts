@@ -1,8 +1,13 @@
 import { describe, expect, it } from "bun:test"
 
-import { analyzeCredentialsHealth } from "../../../lib/vault/health"
+import { EFF_LARGE_WORDLIST } from "../../../lib/eff-large-wordlist"
+import {
+  analyzeCredentialsHealth,
+  passphraseWordCount,
+} from "../../../lib/vault/health"
 import {
   DEFAULT_PASSWORD_OPTIONS,
+  generatePassphrase,
   generatePassword,
 } from "../../../lib/password-generator"
 import type { Credential } from "../../../lib/vault/types"
@@ -224,5 +229,89 @@ describe("analyzeCredentialsHealth", () => {
   it("returns no warnings for a recent unique password", async () => {
     const [report] = await analyzeCredentialsHealth([credential("only")])
     expect(report.warnings).toEqual([])
+  })
+})
+
+describe("passphrases", () => {
+  const words = new Set(EFF_LARGE_WORDLIST)
+
+  it("counts list words for each separator, capitalisation and number", () => {
+    expect(passphraseWordCount("abacus-zoom-yo-yo-t-shirt", words)).toBe(4)
+    expect(passphraseWordCount("Abacus Zoom Cabbage7 Dwelling", words)).toBe(4)
+    expect(passphraseWordCount("abacuszoomcabbagedwelling", words)).toBe(4)
+    expect(passphraseWordCount("abacus-zoom.cabbage-dwelling", words)).toBe(0)
+    expect(passphraseWordCount("abacus-zoom-cabbage-x", words)).toBe(0)
+    expect(passphraseWordCount("abacus1-zoom2-cabbage-dwelling", words)).toBe(0)
+  })
+
+  it("does not flag generated passphrases as weak or short", () => {
+    const words4 = [...words]
+    for (const separator of ["-", " ", ".", "_", ",", ""] as const) {
+      for (let round = 0; round < 25; round++) {
+        const password = generatePassphrase(
+          { wordCount: 4, separator, capitalize: true, includeNumber: true },
+          words4
+        )
+        const [report] = analyzeCredentialsHealth(
+          [credential(`pp-${separator}-${round}`, { password })],
+          words
+        )
+
+        expect(
+          report.warnings.filter(
+            (warning) => warning.type === "Weak" || warning.type === "Short"
+          )
+        ).toEqual([])
+      }
+    }
+  })
+
+  it("lets a short four-word passphrase through only with the word list", () => {
+    const password = "OakIvyElmFox"
+    expect(passphraseWordCount(password, words)).toBe(4)
+
+    const [without] = analyzeCredentialsHealth([credential("a", { password })])
+    const [withList] = analyzeCredentialsHealth(
+      [credential("a", { password })],
+      words
+    )
+
+    expect(without.warnings.map((warning) => warning.type)).toContain("Short")
+    expect(withList.warnings).toEqual([])
+  })
+
+  it("still flags other weak passwords and repeated passphrases", () => {
+    const reports = analyzeCredentialsHealth(
+      [
+        credential("short", { password: "zoom" }),
+        credential("common", { password: "password1" }),
+        credential("words3", { password: "oak-ivy-elm" }),
+        credential("repeat", { password: "zoomzoomzoomzoom" }),
+        credential("pattern", { password: "dragon99" }),
+      ],
+      words
+    )
+    const types = (id: string) =>
+      reports
+        .find((report) => report.id === id)!
+        .warnings.map((warning) => warning.type)
+
+    expect(types("short")).toContain("Weak")
+    expect(types("common")).toContain("Weak")
+    expect(types("words3")).toContain("Short")
+    expect(types("repeat")).toContain("Weak")
+    expect(types("pattern")).toContain("Weak")
+  })
+
+  it("still reports a reused passphrase", () => {
+    const password = "abacus-zoom-cabbage-dwelling-lunar"
+    const reports = analyzeCredentialsHealth(
+      [credential("one", { password }), credential("two", { password })],
+      words
+    )
+
+    expect(reports[0].warnings.map((warning) => warning.type)).toEqual([
+      "Reused",
+    ])
   })
 })

@@ -33,6 +33,9 @@ export const ACCOUNT_ERROR_MESSAGES = {
       `Too many attempts. Wait ${wait} before trying again.`,
     tooManyAttemptsFallback:
       "Too many attempts. Wait a few minutes before trying again.",
+    loginUnavailable: "Sign-in is temporarily unavailable. Try again later.",
+    registerUnavailable:
+      "Creating an account is temporarily unavailable. Try again later.",
     serverUnavailable:
       "The server is unavailable right now. Try again in a few moments.",
     connectionUnavailable:

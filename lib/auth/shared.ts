@@ -9,6 +9,9 @@ export const ACCOUNT_EMAIL_MAX_LENGTH = 254
 export const ACCOUNT_CREATED_SIGN_IN_FAILED =
   "Account created but sign-in failed. Please sign in."
 
+/** Sent with a 503 when sign-in and registration cannot be accepted right now. */
+export const AUTH_SOURCE_UNAVAILABLE = "Sign-in is temporarily unavailable."
+
 /**
  * The canonical form of an account email. The vault key is derived from it,
  * so every client must normalize exactly the same way.

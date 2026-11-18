@@ -33,8 +33,15 @@ function tokens(autocomplete: string) {
  * Picks the username and password fields of a sign-in form. Only visible,
  * editable inputs are considered. When a page shows only one of the two (a
  * login split over two steps), only that one is picked.
+ *
+ * With `forSaving`, the fields are read to save a login rather than filled:
+ * a new password (sign-up, password change) is then the one worth saving, so
+ * it is preferred over the current one.
  */
-export function pickLoginFields(fields: FieldInfo[]): LoginFields {
+export function pickLoginFields(
+  fields: FieldInfo[],
+  { forSaving = false }: { forSaving?: boolean } = {}
+): LoginFields {
   const usable = fields
     .map((field, index) => ({
       ...field,
@@ -45,11 +52,15 @@ export function pickLoginFields(fields: FieldInfo[]): LoginFields {
 
   // A form for choosing a new password (sign-up, password change) is not a
   // sign-in, so only a password field that is not a new one is filled.
-  const passwords = usable.filter(
-    (field) =>
-      field.type === "password" && !field.tokens.includes("new-password")
+  const passwordFields = usable.filter((field) => field.type === "password")
+  const newPassword = passwordFields.find((field) =>
+    field.tokens.includes("new-password")
+  )
+  const passwords = passwordFields.filter(
+    (field) => !field.tokens.includes("new-password")
   )
   const password =
+    (forSaving ? newPassword : undefined) ??
     passwords.find((field) => field.tokens.includes("current-password")) ??
     passwords[0] ??
     null

@@ -5,12 +5,17 @@ import {
   originAllowed,
 } from "@/lib/auth/server"
 import { currentApprovedDevice } from "@/lib/devices/server"
+import { readJsonObject } from "@/lib/http/json-body"
 import {
   createShare,
-  listPendingShares,
+  endCredentialShares,
+  isCredentialId,
+  listIncomingShares,
+  listOutgoingShares,
   RecipientNotFoundError,
   SelfShareError,
 } from "@/lib/sharing/server"
+import { parseShareExpiry, ShareExpiryError } from "@/lib/sharing/status"
 import {
   CredentialValidationError,
   validateCredentialDraft,
@@ -27,7 +32,12 @@ export async function GET(request: Request) {
     if (!user) return json({ error: "Not authenticated" }, 401)
     if (!(await currentApprovedDevice(request, user.id)))
       return json({ error: "Device not approved" }, 403)
-    return json({ shares: await listPendingShares(user.id) })
+    const now = new Date()
+    const [incoming, outgoing] = await Promise.all([
+      listIncomingShares(user.id, now),
+      listOutgoingShares(user.id, now),
+    ])
+    return json({ incoming, outgoing })
   } catch {
     return failure()
   }
@@ -45,12 +55,15 @@ export async function POST(request: Request) {
     if (!body) return json({ error: "Invalid request" }, 400)
 
     const normalized = validateCredentialDraft(body.credential)
+    const expiresAt = parseShareExpiry(body.expiresAt)
 
     const result = await createShare({
       fromUserId: user.id,
       fromEmail: user.email,
       toEmail: body.recipientEmail,
       credential: normalized,
+      credentialId: body.credentialId,
+      expiresAt,
     })
     return json(result, 201)
   } catch (error) {
@@ -58,72 +71,67 @@ export async function POST(request: Request) {
       return json({ error: error.message }, 404)
     if (error instanceof SelfShareError)
       return json({ error: error.message }, 400)
+    if (error instanceof ShareExpiryError)
+      return json({ error: error.message }, 400)
     if (error instanceof CredentialValidationError)
       return json({ error: "Credential information is incomplete." }, 400)
     return failure()
   }
 }
 
-async function readBody(
-  request: Request
-): Promise<{ recipientEmail: string; credential: CredentialDraft } | null> {
+// The owner is deleting a credential: end every share of it first, so no
+// copy stays readable after the credential is gone.
+export async function DELETE(request: Request) {
+  if (!originAllowed(request)) return json({ error: "Forbidden" }, 403)
+  try {
+    const user = await authenticatedUser(request)
+    if (!user) return json({ error: "Not authenticated" }, 401)
+    if (!(await currentApprovedDevice(request, user.id)))
+      return json({ error: "Device not approved" }, 403)
+    const credentialId = new URL(request.url).searchParams.get("credentialId")
+    if (!isCredentialId(credentialId))
+      return json({ error: "Invalid request" }, 400)
+    return json({
+      ok: true,
+      ...(await endCredentialShares(user.id, credentialId)),
+    })
+  } catch {
+    return failure()
+  }
+}
+
+async function readBody(request: Request): Promise<{
+  recipientEmail: string
+  credential: CredentialDraft
+  credentialId: string | null
+  expiresAt: unknown
+} | null> {
+  const body = await readJsonObject(request, MAX_SHARE_REQUEST_BYTES)
+  if (!body) return null
+  const { recipientEmail, credential, credentialId, expiresAt } = body
   if (
-    !/^application\/json(?:\s*;|\s*$)/i.test(
-      request.headers.get("content-type") || ""
-    ) ||
-    !request.body
+    typeof recipientEmail !== "string" ||
+    // Older pages send no id; their shares are not linked to a credential.
+    (credentialId != null && !isCredentialId(credentialId)) ||
+    !credential ||
+    typeof credential !== "object" ||
+    Array.isArray(credential)
   )
     return null
-  const declared = request.headers.get("content-length")
+  const { accountName, siteOrApp, username, password, notes } =
+    credential as Record<string, unknown>
   if (
-    declared &&
-    (!/^\d+$/.test(declared) || Number(declared) > MAX_SHARE_REQUEST_BYTES)
-  ) {
-    void request.body.cancel().catch(() => undefined)
+    typeof accountName !== "string" ||
+    typeof siteOrApp !== "string" ||
+    typeof username !== "string" ||
+    typeof password !== "string" ||
+    (notes !== undefined && typeof notes !== "string")
+  )
     return null
-  }
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > MAX_SHARE_REQUEST_BYTES) {
-        void reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(value)
-    }
-    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return null
-    const { recipientEmail, credential } = parsed as Record<string, unknown>
-    if (
-      typeof recipientEmail !== "string" ||
-      !credential ||
-      typeof credential !== "object" ||
-      Array.isArray(credential)
-    )
-      return null
-    const { accountName, siteOrApp, username, password, notes } =
-      credential as Record<string, unknown>
-    if (
-      typeof accountName !== "string" ||
-      typeof siteOrApp !== "string" ||
-      typeof username !== "string" ||
-      typeof password !== "string" ||
-      (notes !== undefined && typeof notes !== "string")
-    )
-      return null
-    return {
-      recipientEmail,
-      credential: { accountName, siteOrApp, username, password, notes },
-    }
-  } catch {
-    return null
-  } finally {
-    reader.releaseLock()
+  return {
+    recipientEmail,
+    credential: { accountName, siteOrApp, username, password, notes },
+    credentialId: isCredentialId(credentialId) ? credentialId : null,
+    expiresAt,
   }
 }

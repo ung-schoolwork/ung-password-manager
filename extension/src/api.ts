@@ -1,15 +1,17 @@
-// The service worker is the extension's only API client. Popups and (later)
-// content scripts ask it over runtime messaging instead of calling the app
-// themselves: a content script's requests would carry the visited site's
-// origin, which the server rejects.
+// The service worker is the extension's only API client. The popup asks it
+// over runtime messaging instead of calling the app itself. Scripts injected
+// into pages never call it: their requests would carry the visited site's
+// origin, which the server rejects, and the service worker refuses them.
 //
 // Requests carry the browser's own session and device cookies, because the
 // extension has host permission for the app's origin. The service worker only
-// ever handles ciphertext and the auth key: it never sees the password, the
-// vault keys, or decrypted vault data, and it keeps nothing between messages.
+// ever handles ciphertext (including vaults the popup encrypted to save) and
+// the auth key: it never sees the password, the vault keys, or decrypted
+// vault data, and it keeps nothing between messages.
 
 import {
   isVaultRevision,
+  MAX_VAULT_REQUEST_BYTES,
   parseVaultWrite,
   parseWrappedVaultKey,
 } from "@/lib/vault/remote"
@@ -19,6 +21,11 @@ export type SignedOut = { state: "signed-out" }
 export type Unavailable = { state: "unavailable" }
 /** This Chrome profile is signed in but is not an approved device. */
 export type NotApproved = { state: "not-approved" }
+/**
+ * The app answered but refused this extension's origin (it is not listed in
+ * the server's EXTENSION_ORIGINS), so nothing the popup sends can succeed.
+ */
+export type Blocked = { state: "blocked" }
 
 export type SessionStatus =
   | { state: "signed-in"; userId: string; email: string }
@@ -29,12 +36,14 @@ export type SignInResult =
   | Extract<SessionStatus, { state: "signed-in" }>
   | { state: "rejected" }
   | { state: "throttled" }
+  | Blocked
   | Unavailable
 
 export type DeviceStatus =
   | { state: "approved" }
   | { state: "pending"; code: string; expiresAt: string }
   | SignedOut
+  | Blocked
   | Unavailable
 
 export interface VaultSnapshot {
@@ -47,15 +56,26 @@ export type VaultResult =
   | { state: "ok"; snapshot: VaultSnapshot }
   | SignedOut
   | NotApproved
+  | Blocked
   | Unavailable
 
 export type RevisionResult =
   | { state: "ok"; revision: string | null }
   | SignedOut
   | NotApproved
+  | Blocked
   | Unavailable
 
-export type SignOutResult = SignedOut | Unavailable
+export type SignOutResult = SignedOut | Blocked | Unavailable
+
+export type SaveVaultResult =
+  | { state: "saved"; revision: string }
+  /** Another device saved a newer vault first; nothing was overwritten. */
+  | { state: "conflict" }
+  | SignedOut
+  | NotApproved
+  | Blocked
+  | Unavailable
 
 export type ExtensionRequest =
   | { type: "session" }
@@ -64,6 +84,11 @@ export type ExtensionRequest =
   | { type: "device" }
   | { type: "vault" }
   | { type: "revision" }
+  | {
+      type: "save-vault"
+      envelope: VaultEnvelope
+      expectedRevision: string | null
+    }
 
 /** What the service worker answers to each request type. */
 export interface ExtensionResponses {
@@ -73,9 +98,10 @@ export interface ExtensionResponses {
   device: DeviceStatus
   vault: VaultResult
   revision: RevisionResult
+  "save-vault": SaveVaultResult
 }
 
-const SIMPLE_TYPES = new Set([
+const SIMPLE_TYPES = new Set<string>([
   "session",
   "sign-out",
   "device",
@@ -85,7 +111,16 @@ const SIMPLE_TYPES = new Set([
 
 export function isExtensionRequest(value: unknown): value is ExtensionRequest {
   if (typeof value !== "object" || value === null) return false
-  const { type, email, authKey } = value as Record<string, unknown>
+  const { type, email, authKey, envelope, expectedRevision } = value as Record<
+    string,
+    unknown
+  >
+  if (type === "save-vault")
+    return (
+      parseVaultWrite({ envelope, expectedRevision }) !== null &&
+      JSON.stringify({ envelope, expectedRevision }).length <=
+        MAX_VAULT_REQUEST_BYTES
+    )
   if (type === "sign-in")
     return (
       typeof email === "string" &&
@@ -102,8 +137,8 @@ async function call(
   appOrigin: string,
   path: string,
   fetchImpl: Fetch,
-  init: { method: "GET" | "POST"; body?: unknown } = { method: "GET" }
-): Promise<{ status: number; body: unknown } | null> {
+  init: { method: "GET" | "POST" | "PUT"; body?: unknown } = { method: "GET" }
+): Promise<Answer> {
   try {
     const response = await fetchImpl(`${appOrigin}${path}`, {
       method: init.method,
@@ -122,6 +157,20 @@ async function call(
   } catch {
     return null
   }
+}
+
+type Answer = { status: number; body: unknown } | null
+
+/**
+ * The app refuses requests from origins it does not allow with 403 and
+ * `{ error: "Forbidden" }`. Other 403s (such as "Device not approved") mean
+ * something else.
+ */
+function originRefused(result: Answer) {
+  return (
+    result?.status === 403 &&
+    (result.body as { error?: unknown } | null)?.error === "Forbidden"
+  )
 }
 
 function signedInFrom(body: unknown): SessionStatus {
@@ -159,6 +208,7 @@ export async function signIn(
   if (result?.status === 400 || result?.status === 401)
     return { state: "rejected" }
   if (result?.status === 429) return { state: "throttled" }
+  if (originRefused(result)) return { state: "blocked" }
   if (result?.status !== 200) return { state: "unavailable" }
   const session = signedInFrom(result.body)
   return session.state === "signed-in" ? session : { state: "unavailable" }
@@ -172,9 +222,9 @@ export async function signOut(
   const result = await call(appOrigin, "/api/auth/logout", fetchImpl, {
     method: "POST",
   })
-  return result?.status === 200 || result?.status === 401
-    ? { state: "signed-out" }
-    : { state: "unavailable" }
+  if (result?.status === 200 || result?.status === 401)
+    return { state: "signed-out" }
+  return originRefused(result) ? { state: "blocked" } : { state: "unavailable" }
 }
 
 /**
@@ -191,6 +241,7 @@ export async function fetchDevice(
     body: {},
   })
   if (result?.status === 401) return { state: "signed-out" }
+  if (originRefused(result)) return { state: "blocked" }
   if (result?.status !== 200) return { state: "unavailable" }
   const body = result.body as {
     approved?: unknown
@@ -209,10 +260,11 @@ export async function fetchDevice(
 }
 
 function vaultAccessFailure(
-  status: number | undefined
-): SignedOut | NotApproved | Unavailable {
-  if (status === 401) return { state: "signed-out" }
-  if (status === 403) return { state: "not-approved" }
+  result: Answer
+): SignedOut | NotApproved | Blocked | Unavailable {
+  if (result?.status === 401) return { state: "signed-out" }
+  if (originRefused(result)) return { state: "blocked" }
+  if (result?.status === 403) return { state: "not-approved" }
   return { state: "unavailable" }
 }
 
@@ -222,7 +274,7 @@ export async function fetchVault(
   fetchImpl: Fetch = fetch
 ): Promise<VaultResult> {
   const result = await call(appOrigin, "/api/vault", fetchImpl)
-  if (result?.status !== 200) return vaultAccessFailure(result?.status)
+  if (result?.status !== 200) return vaultAccessFailure(result)
   const body = result.body as Record<string, unknown> | null
   const wrappedVaultKey = parseWrappedVaultKey(body?.wrappedVaultKey)
   if (!wrappedVaultKey) return { state: "unavailable" }
@@ -253,11 +305,36 @@ export async function fetchRevision(
   fetchImpl: Fetch = fetch
 ): Promise<RevisionResult> {
   const result = await call(appOrigin, "/api/vault/revision", fetchImpl)
-  if (result?.status !== 200) return vaultAccessFailure(result?.status)
+  if (result?.status !== 200) return vaultAccessFailure(result)
   const revision = (result.body as { revision?: unknown } | null)?.revision
   if (revision === null) return { state: "ok", revision: null }
   return isVaultRevision(revision)
     ? { state: "ok", revision }
+    : { state: "unavailable" }
+}
+
+/**
+ * Saves a vault the popup encrypted. The server accepts it only if the vault
+ * is still at `expectedRevision`, so a newer save from another device is never
+ * overwritten.
+ */
+export async function saveVault(
+  appOrigin: string,
+  write: { envelope: VaultEnvelope; expectedRevision: string | null },
+  fetchImpl: Fetch = fetch
+): Promise<SaveVaultResult> {
+  const result = await call(appOrigin, "/api/vault", fetchImpl, {
+    method: "PUT",
+    body: {
+      envelope: write.envelope,
+      expectedRevision: write.expectedRevision,
+    },
+  })
+  if (result?.status === 409) return { state: "conflict" }
+  if (result?.status !== 200) return vaultAccessFailure(result)
+  const revision = (result.body as { revision?: unknown } | null)?.revision
+  return isVaultRevision(revision)
+    ? { state: "saved", revision }
     : { state: "unavailable" }
 }
 
@@ -280,5 +357,7 @@ export function handleRequest(
       return fetchVault(appOrigin, fetchImpl)
     case "revision":
       return fetchRevision(appOrigin, fetchImpl)
+    case "save-vault":
+      return saveVault(appOrigin, request, fetchImpl)
   }
 }

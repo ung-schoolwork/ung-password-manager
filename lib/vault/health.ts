@@ -6,6 +6,10 @@
 // storage writes, no logging: passwords go in, warnings come out.
 // ---------------------------------------------------------------------------
 
+import {
+  PASSPHRASE_BITS_PER_WORD,
+  PASSPHRASE_SEPARATORS,
+} from "@/lib/password-generator"
 import type { Credential } from "@/lib/vault/types"
 
 // One warning: a short category label (the UI prints it in bold) plus a
@@ -26,6 +30,10 @@ const MIN_LENGTH = 8 // under this -> "Weak"
 const RECOMMENDED_LENGTH = 15 // 8-14 chars -> "Short"
 const DAYS_OVERDUE = 90 // unchanged for this long -> "Overdue"
 const MIN_SHAPE_LENGTH = 8 // stripped body must be this long to judge its shape
+// Four random words from the EFF list give about 51.7 bits, which is stronger
+// than a random 8-character password from all 94 printable characters.
+const PASSPHRASE_MIN_BITS = 50
+const LONGEST_LIST_WORD = 12 // the EFF list tops out at 9 letters
 
 // Maps risk labels to numbers so they can be compared when sorting.
 const RISK_PRIORITY: Record<string, number> = {
@@ -115,8 +123,66 @@ function isRepeatedPattern(password: string): boolean {
   return false
 }
 
+// Splits a passphrase the way the generator builds one: list words joined by
+// one separator used throughout, any capitalisation, and at most one digit
+// right after a word. Returns the number of list words, or 0 when the password
+// is not made that way. Tries the longest reading so "t-shirt" still counts
+// once with a hyphen separator.
+export function passphraseWordCount(
+  password: string,
+  words: ReadonlySet<string>
+): number {
+  const text = password.toLowerCase()
+  let best = 0
+
+  for (const { value: separator } of PASSPHRASE_SEPARATORS) {
+    const memo = new Map<number, number>()
+
+    // Most words that fill text[position..] starting with a word, or -1.
+    const wordsFrom = (position: number, digitUsed: boolean): number => {
+      const key = position * 2 + (digitUsed ? 1 : 0)
+      const cached = memo.get(key)
+      if (cached !== undefined) return cached
+
+      let most = -1
+      for (let length = 1; length <= LONGEST_LIST_WORD; length++) {
+        const end = position + length
+        if (end > text.length) break
+        if (!words.has(text.slice(position, end))) continue
+
+        const endings = [{ at: end, digitUsed }]
+        if (!digitUsed && /[0-9]/.test(text.charAt(end))) {
+          endings.push({ at: end + 1, digitUsed: true })
+        }
+
+        for (const ending of endings) {
+          if (ending.at === text.length) {
+            most = Math.max(most, 1)
+          } else if (text.startsWith(separator, ending.at)) {
+            const rest = wordsFrom(
+              ending.at + separator.length,
+              ending.digitUsed
+            )
+            if (rest > 0) most = Math.max(most, rest + 1)
+          }
+        }
+      }
+
+      memo.set(key, most)
+      return most
+    }
+
+    best = Math.max(best, wordsFrom(0, false))
+  }
+
+  return best
+}
+
+// `passphraseWords` is the EFF word list as a set. Without it, passphrases are
+// judged like any other password.
 export function analyzeCredentialsHealth(
-  credentials: Credential[]
+  credentials: Credential[],
+  passphraseWords?: ReadonlySet<string> | null
 ): CredentialHealthReport[] {
   // --- Pre-pass: group credentials by password ------------------------------
   // Map<password string, credentials using that password>.
@@ -147,10 +213,21 @@ export function analyzeCredentialsHealth(
         const pwd = cred.password
         const lowerPwd = pwd.toLowerCase() // used for the blocklist check
 
+        // A passphrase of random list words is scored by word count (about
+        // 12.9 bits a word), not by its length or character mix. Only checks
+        // 1 and 4 defer to it; the others still apply.
+        const isStrongPassphrase =
+          passphraseWords != null &&
+          passphraseWordCount(pwd, passphraseWords) *
+            PASSPHRASE_BITS_PER_WORD >=
+            PASSPHRASE_MIN_BITS
+
         // --- Check 1: length --------------------------------------------------
         // `else if` makes these mutually exclusive: a 5-char password gets
         // "Weak" only, never both "Weak" and "Short".
-        if (pwd.length < MIN_LENGTH) {
+        if (isStrongPassphrase) {
+          // Long enough by word entropy.
+        } else if (pwd.length < MIN_LENGTH) {
           warnings.push({
             type: "Weak",
             explanation: `This password has fewer than ${MIN_LENGTH} characters and may be easy to guess.`,
@@ -206,6 +283,7 @@ export function analyzeCredentialsHealth(
         // The length guard means a long passphrase like
         // "correcthorsebatterystaple1" is not penalized.
         const isSimplePattern =
+          !isStrongPassphrase &&
           pwd.length < RECOMMENDED_LENGTH &&
           (/^[a-z]+[0-9]+$/i.test(pwd) || /^[0-9]+[a-z]+$/i.test(pwd))
 

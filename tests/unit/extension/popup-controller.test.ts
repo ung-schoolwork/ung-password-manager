@@ -12,6 +12,7 @@ import {
 } from "../../../extension/src/popup-controller"
 import {
   createWrappedVaultKey,
+  decryptVault,
   deriveAccountKeys,
   encryptVault,
   unwrapVaultKey,
@@ -84,7 +85,12 @@ let server: {
   userId: string
   code: string
   revision: string | null
+  envelope: typeof envelope | null
+  /** Revisions saved by other devices before the next save arrives. */
+  racingSaves: number
   vaultDownloads: number
+  /** The app refuses requests from this extension's origin. */
+  refusesExtension: boolean
   requests: ExtensionRequest["type"][]
 }
 
@@ -95,7 +101,10 @@ beforeEach(() => {
     userId: "user-1",
     code: "12345678",
     revision,
+    envelope,
+    racingSaves: 0,
     vaultDownloads: 0,
+    refusesExtension: false,
     requests: [],
   }
 })
@@ -109,6 +118,7 @@ const send = (async (request: ExtensionRequest) => {
           ? { state: "signed-in", userId: server.userId, email }
           : { state: "signed-out" }
       case "sign-in":
+        if (server.refusesExtension) return { state: "blocked" }
         if (request.authKey !== authKey) return { state: "rejected" }
         server.signedIn = true
         return { state: "signed-in", userId: server.userId, email }
@@ -116,6 +126,7 @@ const send = (async (request: ExtensionRequest) => {
         server.signedIn = false
         return { state: "signed-out" }
       case "device":
+        if (server.refusesExtension) return { state: "blocked" }
         if (!server.signedIn) return { state: "signed-out" }
         return server.approved
           ? { state: "approved" }
@@ -130,12 +141,29 @@ const send = (async (request: ExtensionRequest) => {
         server.vaultDownloads += 1
         return {
           state: "ok",
-          snapshot: { wrappedVaultKey, envelope, revision: server.revision },
+          snapshot: {
+            wrappedVaultKey,
+            envelope: server.envelope,
+            revision: server.revision,
+          },
         }
       case "revision":
         if (!server.signedIn) return { state: "signed-out" }
         if (!server.approved) return { state: "not-approved" }
         return { state: "ok", revision: server.revision }
+      case "save-vault":
+        if (server.refusesExtension) return { state: "blocked" }
+        if (!server.signedIn) return { state: "signed-out" }
+        if (!server.approved) return { state: "not-approved" }
+        if (server.racingSaves > 0) {
+          server.racingSaves -= 1
+          server.revision = crypto.randomUUID()
+        }
+        if (request.expectedRevision !== server.revision)
+          return { state: "conflict" }
+        server.envelope = request.envelope
+        server.revision = crypto.randomUUID()
+        return { state: "saved", revision: server.revision }
     }
   }
   await Promise.resolve()
@@ -256,16 +284,11 @@ describe("popup sign-in", () => {
     server.signedIn = true
     server.approved = true
     server.revision = null
+    // An empty vault has no envelope, so only the wrapped key is checked.
+    server.envelope = null
     const { controller } = popup()
     await controller.start()
-    // An empty vault has no envelope, so only the wrapped key is checked.
-    const original = envelope
-    envelope = null as never
-    try {
-      await controller.unlock(password)
-    } finally {
-      envelope = original
-    }
+    await controller.unlock(password)
     expect(controller.current).toEqual({
       name: "vault",
       email,
@@ -276,6 +299,37 @@ describe("popup sign-in", () => {
       total: 0,
       notice: null,
     })
+    controller.dispose()
+  })
+})
+
+describe("popup connection problems", () => {
+  it("says when the app can't be reached", async () => {
+    const { controller } = popup(undefined, {
+      send: (async () => ({ state: "unavailable" })) as Send,
+    })
+    await controller.start()
+    expect(controller.current).toEqual({ name: "unavailable" })
+  })
+
+  it("says when the app refuses this extension instead of calling it unreachable", async () => {
+    server.refusesExtension = true
+    const { controller } = popup()
+    await controller.start()
+    expect(controller.current.name).toBe("sign-in")
+    await controller.signIn(email, password)
+    expect(controller.current).toEqual({ name: "blocked" })
+
+    // Already signed in from the app: registering the device is refused.
+    server.signedIn = true
+    await controller.start()
+    expect(controller.current).toEqual({ name: "blocked" })
+
+    // Trying again once the app allows the extension carries on as usual.
+    server.refusesExtension = false
+    server.approved = true
+    await controller.start()
+    expect(controller.current).toMatchObject({ name: "unlock", email })
     controller.dispose()
   })
 })
@@ -590,5 +644,193 @@ describe("popup fill", () => {
     await opened.controller.fill("c")
     expect(filled).toEqual([])
     opened.controller.dispose()
+  })
+})
+
+describe("popup save", () => {
+  const pageUrl = "https://www.new-site.example.test/sign-in"
+  let page: Awaited<ReturnType<PopupControllerOptions["readPage"] & {}>>
+
+  beforeEach(() => {
+    page = { username: "new.student", password: "typed on the page 1" }
+  })
+
+  async function openVault(tabUrl: string | null = pageUrl) {
+    server.signedIn = true
+    server.approved = true
+    const result = popup(tabUrl, {
+      currentTab: async () => (tabUrl ? { id: 9, url: tabUrl } : null),
+      readPage: async () => page,
+    })
+    await result.controller.start()
+    await result.controller.unlock(password)
+    expect(result.controller.current.name).toBe("vault")
+    return result
+  }
+
+  async function savedCredentials() {
+    const keys = await deriveKeys(email, password)
+    const vaultKey = await unwrapVaultKey(keys.wrappingKey, wrappedVaultKey)
+    return (await decryptVault(vaultKey, server.envelope!)).credentials
+  }
+
+  it("offers what was typed on the page and saves it as a login for the site", async () => {
+    const { controller } = await openVault()
+    await controller.startSave()
+    expect(controller.current).toEqual({
+      name: "save",
+      email,
+      draft: {
+        accountName: "new-site.example.test",
+        siteOrApp: "new-site.example.test",
+        username: "new.student",
+        password: "typed on the page 1",
+      },
+      errors: {},
+      error: null,
+      busy: false,
+    })
+
+    await controller.saveLogin({
+      accountName: "New site",
+      siteOrApp: "new-site.example.test",
+      username: "new.student",
+      password: "typed on the page 1",
+    })
+    const vault = controller.current
+    expect(vault).toMatchObject({
+      name: "vault",
+      total: 6,
+      notice: { text: "Saved New site.", tone: "info" },
+      siteEntries: [
+        {
+          accountName: "New site",
+          siteOrApp: "new-site.example.test",
+          username: "new.student",
+        },
+      ],
+    })
+    // Only ciphertext reached the server, and it holds every login.
+    const saved = await savedCredentials()
+    expect(saved).toHaveLength(6)
+    expect(saved[0]).toMatchObject({
+      accountName: "New site",
+      password: "typed on the page 1",
+    })
+    expect(JSON.stringify(vault)).not.toContain("typed on the page")
+    controller.dispose()
+  })
+
+  it("starts empty when the page has no sign-in form or is not a website", async () => {
+    page = { username: "", password: "" }
+    const first = await openVault()
+    await first.controller.startSave()
+    expect(first.controller.current).toMatchObject({
+      draft: { username: "", password: "" },
+    })
+    first.controller.dispose()
+
+    const second = await openVault("chrome://newtab/")
+    await second.controller.startSave()
+    expect(second.controller.current).toMatchObject({
+      draft: { accountName: "", siteOrApp: "", username: "", password: "" },
+    })
+    second.controller.cancelSave()
+    expect(second.controller.current.name).toBe("vault")
+    second.controller.dispose()
+  })
+
+  it("asks for missing fields and saves nothing", async () => {
+    const { controller } = await openVault()
+    await controller.startSave()
+    const before = server.revision
+    await controller.saveLogin({
+      accountName: " ",
+      siteOrApp: "new-site.example.test",
+      username: "",
+      password: "",
+    })
+    expect(controller.current).toMatchObject({
+      name: "save",
+      errors: {
+        accountName: "Enter an account label.",
+        username: "Enter a username.",
+        password: "Enter a password.",
+      },
+    })
+    expect(server.revision).toBe(before)
+    controller.dispose()
+  })
+
+  it("adds the login to a vault saved meanwhile on another device", async () => {
+    const { controller } = await openVault()
+    await controller.startSave()
+    server.racingSaves = 1
+    await controller.saveLogin({
+      accountName: "New site",
+      siteOrApp: "new-site.example.test",
+      username: "new.student",
+      password: "typed on the page 1",
+    })
+    expect(controller.current).toMatchObject({ name: "vault", total: 6 })
+    expect(await savedCredentials()).toHaveLength(6)
+
+    // A vault that keeps changing is not overwritten; the form says so.
+    await controller.startSave()
+    server.racingSaves = 5
+    const draft = {
+      accountName: "Another",
+      siteOrApp: "new-site.example.test",
+      username: "other",
+      password: "another password 1",
+    }
+    await controller.saveLogin(draft)
+    expect(controller.current).toMatchObject({
+      name: "save",
+      draft,
+      error:
+        "Your vault is changing on another device. Wait a moment, then save again.",
+      busy: false,
+    })
+    controller.dispose()
+  })
+
+  it("keeps the login on the form when the app refuses this extension", async () => {
+    const { controller } = await openVault()
+    await controller.startSave()
+    server.refusesExtension = true
+    const draft = {
+      accountName: "New site",
+      siteOrApp: "new-site.example.test",
+      username: "new.student",
+      password: "typed on the page 1",
+    }
+    await controller.saveLogin(draft)
+    expect(controller.current).toMatchObject({
+      name: "save",
+      draft,
+      error:
+        "UNG Password Manager isn't accepting this extension, so your login wasn't saved.",
+      busy: false,
+    })
+    controller.dispose()
+  })
+
+  it("signs out instead of saving when the session has ended", async () => {
+    const { controller } = await openVault()
+    await controller.startSave()
+    server.signedIn = false
+    await controller.saveLogin({
+      accountName: "New site",
+      siteOrApp: "new-site.example.test",
+      username: "new.student",
+      password: "typed on the page 1",
+    })
+    expect(controller.current).toEqual({
+      name: "sign-in",
+      error: "You were signed out.",
+      busy: false,
+    })
+    controller.dispose()
   })
 })

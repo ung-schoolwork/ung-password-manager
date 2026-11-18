@@ -4,6 +4,7 @@ import {
   ACCOUNT_CREATED_SIGN_IN_FAILED,
   ACCOUNT_PASSWORD_MAX_LENGTH,
   ACCOUNT_PASSWORD_MIN_LENGTH,
+  AUTH_SOURCE_UNAVAILABLE,
   isValidAccountEmail,
   normalizeAccountEmail,
 } from "@/lib/auth/shared"
@@ -80,6 +81,10 @@ export function accountFailureMessage(
           : messages.request.tooManyAttemptsFallback
       }
       case 503:
+        if (caught.message === AUTH_SOURCE_UNAVAILABLE)
+          return mode === "register"
+            ? messages.request.registerUnavailable
+            : messages.request.loginUnavailable
         return mode === "register" &&
           caught.message === ACCOUNT_CREATED_SIGN_IN_FAILED
           ? messages.request.registerSignInFailed
