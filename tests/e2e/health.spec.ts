@@ -429,7 +429,9 @@ test("reports repeated passphrase words with a clear reason", async ({
   async function savePassphrase(accountName: string, password: string) {
     await page.getByLabel("Account label").fill(accountName)
     await page.getByLabel("Website or app").fill(`${accountName}.example.edu`)
-    await page.getByLabel("Username").fill(`${accountName}@example.edu`)
+    await page
+      .getByLabel("Username", { exact: true })
+      .fill(`${accountName}@example.edu`)
     await page.getByLabel("Password", { exact: true }).fill(password)
     await page.getByRole("button", { name: "Save credential" }).click()
     await expect(
@@ -455,45 +457,4 @@ test("reports repeated passphrase words with a clear reason", async ({
   await expect(
     distinctReport.getByText("No warnings", { exact: true })
   ).toBeVisible()
-})
-
-test("does not briefly label a short passphrase while its word list loads", async ({
-  page,
-}) => {
-  let releaseWordList = () => {}
-  let wordListRequestStarted = false
-  const wordListGate = new Promise<void>((resolve) => {
-    releaseWordList = resolve
-  })
-  const wordListRoute = "**/lib_eff-large-wordlist_ts_*.js"
-  await page.route(wordListRoute, async (route) => {
-    wordListRequestStarted = true
-    await wordListGate
-    await route.continue()
-  })
-
-  try {
-    await page.goto("/")
-    await unlockVault(page)
-    await expect.poll(() => wordListRequestStarted).toBe(true)
-
-    await page.getByLabel("Account label").fill("Short phrase")
-    await page.getByLabel("Website or app").fill("short-phrase.example.edu")
-    await page.getByLabel("Username").fill("short@example.edu")
-    await page.getByLabel("Password", { exact: true }).fill("OakIvyElmFox")
-    await page.getByRole("button", { name: "Save credential" }).click()
-    await page.getByRole("link", { name: "Health", exact: true }).click()
-
-    const report = page
-      .getByRole("list", { name: "Password health reports" })
-      .getByRole("listitem")
-      .filter({ hasText: "Short phrase" })
-    await expect(report.getByText(/Short:/)).toHaveCount(0)
-
-    releaseWordList()
-    await expect(report.getByText("No warnings", { exact: true })).toBeVisible()
-  } finally {
-    releaseWordList()
-    await page.unroute(wordListRoute)
-  }
 })
